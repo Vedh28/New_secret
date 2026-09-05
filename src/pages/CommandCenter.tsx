@@ -78,7 +78,7 @@ export function CommandCenter() {
           )}
         </HudCard>
 
-        <HudCard label="Recent intelligence" title="What changed">
+        <HudCard label="Recent intelligence" title="What changed" className="hud-recent-intelligence">
           <div className="mini-list compact-feed">
             {intel?.temporal_changes?.slice(0, 4).map((c, i) => (
               <div key={`${c.kind}-${c.source}-${i}`} className="entity feed-row">
@@ -107,18 +107,44 @@ export function CommandCenter() {
 
       <div className="hud-grid">
         <section className="hud-col" style={{ display: "grid", gap: 18 }}>
-          {intel && <IntelligenceSummary intel={intel} />}
+          {intel && (
+            <div className="case-intelligence-flip" tabIndex={0} aria-label="Case intelligence and recent intelligence">
+              <div className="case-intelligence-flip-inner">
+                <div className="case-intelligence-flip-face case-intelligence-flip-front">
+                  <HudCard label="Recent intelligence" title="What changed">
+                    <div className="mini-list compact-feed">
+                      {intel.temporal_changes?.slice(0, 4).map((c, i) => (
+                        <div key={`${c.kind}-${c.source}-${i}`} className="entity feed-row">
+                          <div>
+                            <div><span className="tag">{c.kind}</span> {c.source}{c.target ? ` ↔ ${c.target}` : ""}</div>
+                            <div className="meta">{c.explanation}</div>
+                          </div>
+                          <ChevronRight size={14} color="var(--muted)" />
+                        </div>
+                      ))}
+                      {!(intel.temporal_changes?.length) && <div className="meta">No network changes detected yet.</div>}
+                    </div>
+                  </HudCard>
+                </div>
+                <div className="case-intelligence-flip-face case-intelligence-flip-back">
+                  <IntelligenceSummary intel={intel} />
+                </div>
+              </div>
+            </div>
+          )}
           {intel && <PriorityPanel title="Investigation priority" items={intel.entity_priorities} />}
         </section>
 
         <section className="hud-center">
-          <div className="hud-title-bar">NETWORK OVERVIEW</div>
-          <div className="hud-globe-anchors">
-            <div className="glass-strip"><Pin size={12} /> Communities: {intel?.network_dna?.community_count ?? "—"}</div>
-            <div className="glass-strip"><Waves size={12} /> Bridge: {intel?.network_dna?.bridge_dependence ?? "—"}</div>
-            <div className="glass-strip"><ArrowUpRight size={12} /> Coverage: {intel?.network_dna?.evidence_coverage ?? 0}%</div>
+          <div className="hud-overview-panel">
+            <div className="hud-title-bar">NETWORK OVERVIEW</div>
+            <div className="hud-globe-anchors">
+              <div className="glass-strip"><Pin size={12} /> Communities: {intel?.network_dna?.community_count ?? "—"}</div>
+              <div className="glass-strip"><Waves size={12} /> Bridge: {intel?.network_dna?.bridge_dependence ?? "—"}</div>
+              <div className="glass-strip"><ArrowUpRight size={12} /> Coverage: {intel?.network_dna?.evidence_coverage ?? 0}%</div>
+            </div>
           </div>
-          {intel && <div style={{ marginTop: 18 }}><DnaPanel dna={intel.network_dna} /></div>}
+          {intel && <div className="hud-dna-panel"><DnaPanel dna={intel.network_dna} /></div>}
         </section>
 
         <section className="hud-col" style={{ display: "grid", gap: 18 }}>

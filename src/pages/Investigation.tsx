@@ -82,7 +82,7 @@ export function Investigation() {
 
   if (backend !== "backend") {
     return (
-      <HudPage title={activeCase?.case_number ?? "CASE-2026-0817"} subtitle={activeCase?.title ?? "Organized Network Analysis"} rightMeta={<><div>OFFLINE DEMO</div></>}>
+      <HudPage className="investigation-page" title={activeCase?.case_number ?? "CASE-2026-0817"} subtitle={activeCase?.title ?? "Organized Network Analysis"} rightMeta={<><div>OFFLINE DEMO</div></>}>
         <div className="hud-investigation-layout">
           <HudCard label="Case graph" title="Network View" className="hud-investigation-list">
             <div className="table">
@@ -113,6 +113,7 @@ export function Investigation() {
 
   return (
     <HudPage
+      className="investigation-page"
       title="INVESTIGATIONS"
       subtitle="Relational case records and extracted entities"
       rightMeta={<>{loading ? <div>SYNCING</div> : <div>SYNCED</div>}<div>{entities.length} ENTITIES</div></>}

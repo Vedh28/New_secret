@@ -4,10 +4,11 @@ export function HudPage({
   title,
   subtitle,
   rightMeta,
+  className = "",
   children
-}: PropsWithChildren<{ title: string; subtitle: string; rightMeta?: ReactNode }>) {
+}: PropsWithChildren<{ title: string; subtitle: string; rightMeta?: ReactNode; className?: string }>) {
   return (
-    <div className="page hud-page">
+    <div className={`page hud-page ${className}`.trim()}>
       <div className="command-header">
         <div>
           <div className="brand-lock">{title}</div>

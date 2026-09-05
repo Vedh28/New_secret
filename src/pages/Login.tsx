@@ -3,6 +3,18 @@ import { motion } from "framer-motion";
 import { useAppStore } from "../store";
 import { ShieldCheck, Network, LockKeyhole, ArrowRight } from "lucide-react";
 
+const MESH_ITEMS = [
+  ["NODES", "1,248", "indexed"],
+  ["SOURCES", "86", "connected"],
+  ["LINKS", "3,902", "mapped"],
+  ["ENTITIES", "742", "resolved"],
+  ["ALERTS", "18", "active"],
+  ["CASES", "12", "tracked"],
+  ["COMMS", "2.8K", "signals"],
+  ["TXNS", "946", "screened"],
+  ["COVERAGE", "78%", "verified"],
+] as const;
+
 export function LoginScreen() {
   const login = useAppStore((s) => s.login);
   const enterApp = useAppStore((s) => s.enterApp);
@@ -27,7 +39,6 @@ export function LoginScreen() {
           <div className="stack">
             <h1 className="title">Smart Entity &amp; Criminal Relationship Exploration Tool</h1>
             <p className="headline">A premium intelligence-analysis workspace for network discovery, entity profiling, and operational awareness.</p>
-            <div className="status"><span>SECURE ENVIRONMENT</span><span>SYSTEM ONLINE</span></div>
             <form className="stack" onSubmit={submit}>
               <input
                 className="control hud-search"
@@ -58,8 +69,14 @@ export function LoginScreen() {
           <motion.div initial={{ opacity: 0.6, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 1.2 }} className="panel mini">
             <div className="row" style={{ justifyContent: "space-between" }}><h3 style={{ margin: 0 }}>Operational Mesh</h3><Network size={18} color="var(--blue)" /></div>
             <p className="meta">Live graph indices, source registry, and community analytics once connected to the backend.</p>
-            <div className="grid" style={{ gridTemplateColumns: "repeat(3,1fr)", marginTop: 16 }}>
-              {Array.from({ length: 9 }).map((_, i) => <div key={i} style={{ height: 36 + (i % 3) * 24, borderRadius: 999, background: `linear-gradient(180deg, rgba(77,141,255,${0.14 + i * 0.01}), rgba(77,141,255,0.02))`, border: "1px solid rgba(255,255,255,.06)" }} />)}
+            <div className="mesh-grid">
+              {MESH_ITEMS.map(([label, value, status]) => (
+                <button className="mesh-node" key={label} type="button" title={`${label}: ${value} ${status}`}>
+                  <span>{label}</span>
+                  <strong>{value}</strong>
+                  <small>{status}</small>
+                </button>
+              ))}
             </div>
             <div className="row" style={{ marginTop: 14 }}>
               <ShieldCheck size={16} color="var(--green)" />

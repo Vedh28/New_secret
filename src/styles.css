@@ -19,6 +19,8 @@
   --green:#4de0aa;
 }
 *{box-sizing:border-box}
+html,body,*{scrollbar-width:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{display:none;width:0;height:0}
 html,body,#root{height:100%}
 body{margin:0;background:
 radial-gradient(circle at 50% 22%, rgba(23,34,83,.52), transparent 22%),
@@ -82,7 +84,7 @@ button,input{font:inherit}
 .globe-incident-copy span{font:600 10px/1 "Fira Code", monospace;letter-spacing:.16em;color:#d4f4ff}
 .globe-incident-copy strong{font:700 20px/1 "Outfit", system-ui, sans-serif;color:#9fc0ff;white-space:nowrap}
 .globe-incident-copy small,.globe-incident-copy em{font-style:normal;font:500 10px/1.2 "Fira Code", monospace;letter-spacing:.12em;color:var(--muted);text-align:center}
-.app-main{overflow:auto;padding:16px 18px 22px;position:relative;z-index:1}
+.app-main{overflow:auto;padding:16px 18px 22px;position:relative;z-index:1;background:var(--bg)}
 .brand{font:700 22px/1 "Outfit", system-ui, sans-serif;letter-spacing:.22em}
 .subtle,.meta{color:var(--muted);font-size:12px;line-height:1.5}
 .nav-item,.icon-button,.cta,.pill,.card,.metric,.control{border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02);color:var(--text);border-radius:14px}
@@ -99,15 +101,22 @@ radial-gradient(circle at 50% 20%, rgba(58,111,255,.12), transparent 20%),
 radial-gradient(circle at 50% 48%, rgba(67,170,255,.05), transparent 24%);
 filter:blur(8px)}
 .command-center{gap:18px;position:relative}
-.top-nav{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 18px 8px;position:sticky;top:0;z-index:10;background:linear-gradient(180deg, rgba(5,8,22,.98), rgba(5,8,22,.72));backdrop-filter:blur(18px);border-bottom:1px solid rgba(255,255,255,.05)}
+.top-nav{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 18px 8px;position:sticky;top:0;z-index:10;isolation:isolate;background:rgba(5,8,22,.98);backdrop-filter:blur(18px);border-bottom:0}
+.command-shell .top-nav::before{content:"";position:absolute;inset:-28px 0 -24px;z-index:-1;background:rgba(5,8,22,.98);backdrop-filter:blur(18px);pointer-events:none}
 .top-nav-brand{display:flex;align-items:center;gap:12px;min-width:240px}
 .brand-mark{width:34px;height:34px;border:1px solid rgba(94,129,255,.38);border-radius:10px;display:grid;place-items:center;color:#f5f7fa;background:rgba(255,255,255,.03);box-shadow:0 0 18px rgba(63,115,255,.12) inset}
 .top-nav-title{font:700 18px/1 "Outfit", system-ui, sans-serif;letter-spacing:.2em}
 .top-nav-subtitle{color:var(--muted);font-size:11px;max-width:34ch}
 .top-nav-links{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-.top-nav-group{display:flex;gap:8px;align-items:center}
-.top-nav-group-label{font-size:9px;letter-spacing:.16em;color:var(--muted);opacity:.6;margin-right:2px;white-space:nowrap}
+.top-nav-group{position:relative;display:flex;align-items:center}
+.top-nav-main{display:flex;align-items:center;gap:7px;padding:9px 11px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer;font-size:10px;letter-spacing:.14em;text-transform:uppercase;transition:.18s ease;white-space:nowrap}
+.top-nav-main:hover,.top-nav-main:focus-visible,.top-nav-main.active{color:var(--text);border-color:rgba(63,115,255,.42);background:rgba(63,115,255,.10);outline:none}
+.top-nav-direct{gap:6px}
+.top-nav-menu{position:absolute;top:calc(100% + 8px);left:0;z-index:20;display:grid;gap:5px;min-width:176px;padding:8px;border:1px solid rgba(87,116,220,.28);border-radius:13px;background:rgba(7,12,30,.97);box-shadow:0 18px 38px rgba(0,0,0,.35),0 0 24px rgba(63,115,255,.08);backdrop-filter:blur(18px);opacity:0;visibility:hidden;transform:translateY(-5px);transition:opacity .16s ease,transform .16s ease,visibility .16s ease}
+.top-nav-group.is-open .top-nav-menu{opacity:1;visibility:visible;transform:translateY(0)}
+.top-nav-menu-label{padding:4px 8px 6px;color:var(--muted);opacity:.62;font-size:9px;letter-spacing:.16em;text-transform:uppercase}
 .top-nav-item{display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:10px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02);color:var(--muted);cursor:pointer;transition:.18s ease;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.top-nav-menu .top-nav-item{width:100%;justify-content:flex-start}
 .top-nav-item.active{color:var(--text);border-color:rgba(63,115,255,.42);background:rgba(63,115,255,.10)}
 .top-nav-item:hover{border-color:rgba(57,198,255,.22);color:var(--text)}
 .command-title-row{display:grid;grid-template-columns:1fr auto 1fr;align-items:start;gap:16px;padding:18px 8px 8px}
@@ -160,6 +169,13 @@ backdrop-filter:blur(28px);display:grid;gap:18px;box-shadow:0 28px 90px rgba(0,0
 .tag{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .risk{color:#ffb4bc}
 .mini{height:280px}
+.login .panel.mini{height:auto;min-height:360px}
+.mesh-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}
+.mesh-node{min-height:64px;padding:9px 10px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:linear-gradient(180deg,rgba(77,141,255,.14),rgba(77,141,255,.03));color:var(--text);text-align:left;cursor:pointer;display:grid;gap:3px;transition:.18s ease}
+.mesh-node:hover{transform:translateY(-2px);border-color:rgba(98,211,255,.5);background:linear-gradient(180deg,rgba(77,141,255,.24),rgba(77,141,255,.06));box-shadow:0 8px 18px rgba(0,0,0,.18)}
+.mesh-node span{font:600 9px/1 "Fira Code",monospace;letter-spacing:.12em;color:#9fc0ff}
+.mesh-node strong{font:700 18px/1 "Outfit",system-ui,sans-serif}
+.mesh-node small{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
 .filters{display:flex;gap:10px;flex-wrap:wrap}
 .control{padding:10px 12px}
 .alert{display:flex;justify-content:space-between;align-items:center;padding:14px;border-radius:16px;border:1px solid var(--border);background:rgba(255,255,255,.02)}
@@ -267,26 +283,43 @@ background-size:auto, auto, auto, auto, 100% 36px, 36px 100%}
 .hud-surface-grid-alt{height:420px}
 .hud-network-layout,.hud-investigation-layout,.hud-explorer-layout,.hud-timeline-layout,.hud-alert-layout,.hud-reports-layout,.hud-settings-layout,.hud-placeholder-layout{display:grid;gap:18px}
 .hud-network-layout{grid-template-columns:.9fr 1.3fr .8fr}
-.hud-network-controls{min-height:240px}
+.hud-network-controls{height:380px;min-height:380px;align-self:start}
 .hud-network-mini{display:grid;gap:12px;margin-top:12px}
 .hud-network-orbit{height:120px;border-radius:50%;border:1px solid rgba(63,115,255,.26);background:radial-gradient(circle, rgba(63,115,255,.12) 0 10%, transparent 10% 35%, rgba(30,162,255,.10) 35% 36%, transparent 36%);box-shadow:0 0 18px rgba(63,115,255,.08)}
 .hud-network-axis{display:flex;justify-content:space-between;gap:10px;color:var(--muted);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
-.hud-network-mesh{min-height:620px;position:relative}
+.hud-network-mesh{height:380px;min-height:380px;align-self:start;position:relative}
+.hud-network-mesh .hud-net-graph{top:78px;bottom:auto;min-height:0;height:280px}
 .hud-network-overlay{position:absolute;left:18px;bottom:16px;right:18px;display:flex;gap:10px;justify-content:space-between}
 .hud-net-graph{position:absolute;left:14px;right:14px;top:8px;bottom:52px}
 .hud-net-surface{position:absolute;inset:0}
 .hud-net-selection{font-size:11px;letter-spacing:.08em;pointer-events:none}
 .hud-net-controls button{pointer-events:auto;font-size:10px;padding:6px 10px}
 .hud-network-side{display:grid;gap:16px}
+@media (min-width: 1201px){
+  .hud-network-layout{grid-template-columns:.8fr 1.2fr;align-items:start}
+  .hud-network-controls{grid-column:1}
+  .hud-network-mesh{grid-column:2}
+  .hud-network-side{grid-column:1 / -1;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
+  .hud-network-side > .hud-card{min-height:260px}
+}
 .hud-investigation-layout{grid-template-columns:1.05fr .85fr}
 .hud-investigation-list{min-height:620px}
 .hud-investigation-profile{min-height:620px}
+.investigation-page .hud-investigation-list,.investigation-page .hud-investigation-profile{min-height:0;max-height:calc(100vh - 210px);overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(63,115,255,.45) transparent}
+.investigation-page .hud-investigation-list{display:flex;flex-direction:column;overflow:hidden}
+.investigation-page .hud-investigation-list > .table{min-height:0;overflow-y:auto;flex:1;scrollbar-width:none}
+.investigation-page .hud-investigation-list > .table::-webkit-scrollbar{display:none}
+.investigation-page .hud-investigation-list::-webkit-scrollbar,.investigation-page .hud-investigation-profile::-webkit-scrollbar{width:6px}
+.investigation-page .hud-investigation-list::-webkit-scrollbar-thumb,.investigation-page .hud-investigation-profile::-webkit-scrollbar-thumb{background:rgba(63,115,255,.45);border-radius:999px}
 .hud-investigation-bands{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
 .entity-tight{padding:11px 13px}
-.hud-explorer-layout{grid-template-columns:.95fr 1.35fr}
-.hud-explorer-search{min-height:220px}
+.hud-explorer-layout{grid-template-columns:280px minmax(0,1fr);align-items:start;align-content:start}
+.hud-explorer-search{min-height:220px;position:sticky;top:16px;grid-column:1;grid-row:1}
 .hud-search-hints{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
-.hud-explorer-grid{min-height:620px}
+.hud-explorer-grid{min-height:620px;grid-column:2;grid-row:1 / span 2}
+.hud-explorer-grid .hud-entity-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));align-content:start;gap:12px}
+.hud-explorer-grid .hud-mini-card{min-height:150px}
+.hud-explorer-intelligence{grid-column:1;grid-row:2;margin-top:-18px}
 .hud-timeline-layout{grid-template-columns:1fr .7fr}
 .timeline-rail{display:grid;gap:12px}
 .timeline-row{display:grid;grid-template-columns:18px 1fr;gap:12px;align-items:start}
@@ -315,8 +348,21 @@ box-shadow:0 0 20px rgba(63,115,255,.08)}
 .command-center .hud-grid{grid-template-columns:286px minmax(520px,1fr) 324px;gap:18px}
 .command-center .hud-col{gap:14px}
 .command-center .hud-hero{min-height:214px}
-.command-center .hud-center{gap:10px}
-.command-center .hud-bottom{grid-template-columns:1.2fr 1fr .95fr}
+.command-center .hud-center{gap:10px;margin-top:100px}
+.command-center .hud-overview-panel{transform:translateY(70px)}
+.command-center .hud-dna-panel{margin-top:80px}
+.command-center .hud-recent-intelligence{visibility:hidden;opacity:0;pointer-events:none}
+.command-center .hud-bottom{grid-template-columns:1fr 1.2fr .95fr}
+.command-center .hud-bottom-command > .hud-card:nth-child(2){margin-top:28px}
+.command-center .hud-grid > .hud-col:first-child > .hud-card:last-child{margin-top:60px}
+.case-intelligence-flip{perspective:1200px;min-height:270px;outline:none}
+.case-intelligence-flip-inner{position:relative;min-height:270px;transform-style:preserve-3d;transition:transform .55s cubic-bezier(.2,.7,.2,1)}
+.case-intelligence-flip:hover .case-intelligence-flip-inner,.case-intelligence-flip:focus-visible .case-intelligence-flip-inner{transform:rotateY(180deg)}
+.case-intelligence-flip-face{position:absolute;inset:0;backface-visibility:hidden}
+.case-intelligence-flip-back{transform:rotateY(180deg)}
+.case-intelligence-flip-hint{position:absolute;right:16px;bottom:12px;color:var(--muted);font:500 9px/1 "Fira Code",monospace;letter-spacing:.08em;text-transform:uppercase;opacity:.72}
+.case-intelligence-flip-front .compact-feed{scrollbar-width:none}
+.case-intelligence-flip-front .compact-feed::-webkit-scrollbar{display:none}
 .command-center .hud-bottom-tight{grid-template-columns:1fr 1fr}
 .command-center .hud-card h3{font-size:18px}
 .command-center .hud-label{color:#8cb0ff}
@@ -329,6 +375,10 @@ box-shadow:0 0 20px rgba(63,115,255,.08)}
 .command-center .hud-network-layout{grid-template-columns:1fr}
 @media (max-width: 1400px){
   .command-center .hud-grid,.command-center .hud-bottom{grid-template-columns:1fr}
+  .command-center .hud-center{margin-top:48px}
+  .command-center .hud-overview-panel{transform:translateY(32px)}
+  .command-center .hud-dna-panel{margin-top:32px}
+  .command-center .hud-grid > .hud-col:first-child > .hud-card:last-child{margin-top:24px}
 }
 @media (max-width: 1200px){
   .app-shell{display:block}
@@ -339,8 +389,14 @@ box-shadow:0 0 20px rgba(63,115,255,.08)}
   .panel-footer-grid{grid-template-columns:1fr}
   .hud-grid,.hud-bottom,.hud-bottom-alt{grid-template-columns:1fr}
   .hud-network-layout,.hud-investigation-layout,.hud-explorer-layout,.hud-timeline-layout,.hud-alert-layout,.hud-reports-layout,.hud-settings-layout,.hud-placeholder-layout,.hud-bottom-tight{grid-template-columns:1fr}
+  .hud-explorer-search,.hud-explorer-grid,.hud-explorer-intelligence{grid-column:auto;grid-row:auto;margin-top:0}
   .top-nav{flex-direction:column;align-items:flex-start}
   .top-nav-links{justify-content:flex-start}
   body{overflow:auto}
   .app-main{overflow:visible}
+}
+@media (max-width: 1400px){
+  .login{min-height:100%;height:auto;padding:24px 0;place-items:start center;overflow:auto}
+  .login-card{width:min(760px,92vw);padding:32px}
+  .login-grid{grid-template-columns:1fr}
 }

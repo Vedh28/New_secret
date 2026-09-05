@@ -83,19 +83,27 @@ export function EntityExplorer() {
             {!filtered.length && <div className="meta">No entities found. Ingest a source to grow the registry.</div>}
           </div>
         </HudCard>
+        <HudCard label="Entity intelligence" title={selectedId ?? "Select an entity"} className="hud-explorer-intelligence">
+          {caseIntel && selectedId ? (
+              <>
+                <div className="meta">
+                  Focus entity {selectedId}. Priority and anomaly signals below derive from the
+                  unified intelligence engine.
+                </div>
+                {caseIntel.anomalies?.filter((a) => a.entity_id.includes(selectedId)).length ? (
+                  <AnomalyList anomalies={caseIntel.anomalies.filter((a) => a.entity_id.includes(selectedId))} />
+                ) : <div className="meta">No anomaly signals for this entity.</div>}
+              </>
+          ) : <div className="meta">
+            {selectedId
+              ? "Intelligence data is loading for this entity."
+              : "Select an entity from the result matrix to inspect its intelligence."}
+          </div>}
+        </HudCard>
       </div>
 
       {caseIntel && selectedId && (
         <div className="hud-explorer-layout" style={{ marginTop: 18 }}>
-          <HudCard label="Entity intelligence" title={selectedId}>
-            <div className="meta">
-              Focus entity {selectedId}. Priority and anomaly signals below derive from the
-              unified intelligence engine.
-            </div>
-            {caseIntel.anomalies?.filter((a) => a.entity_id.includes(selectedId)).length ? (
-              <AnomalyList anomalies={caseIntel.anomalies.filter((a) => a.entity_id.includes(selectedId))} />
-            ) : null}
-          </HudCard>
           <PriorityPanel title="By priority" items={caseIntel.entity_priorities.filter((p) => p.subject === selectedId)} />
           <PotentialLinksList links={caseIntel.potential_links.filter((l) => l.source === selectedId || l.target === selectedId)} />
         </div>

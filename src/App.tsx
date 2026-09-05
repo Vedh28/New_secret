@@ -54,5 +54,5 @@ export function App() {
   }, [loginComplete, connect]);
 
   const content = useMemo(() => (section === "login" ? <LoginScreen /> : pages[section]), [section]);
-  return section === "login" ? content : <Layout><ErrorBoundary fallback={<div className="panel"><h3>Command Center unavailable</h3><div className="meta">The visualization layer failed to load, but the app shell is still running.</div></div>}>{content}</ErrorBoundary></Layout>;
+  return section === "login" ? content : <Layout><ErrorBoundary key={section} fallback={<div className="panel"><h3>Command Center unavailable</h3><div className="meta">The visualization layer failed to load, but the app shell is still running.</div></div>}>{content}</ErrorBoundary></Layout>;
 }

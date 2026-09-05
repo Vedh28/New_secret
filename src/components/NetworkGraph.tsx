@@ -35,18 +35,23 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]): Position[] {
   }));
   const idToIndex = new Map(simNodes.map((n, i) => [n.id, i]));
   const links = edges
-    .filter((e) => idToIndex.has(e.source) && idToIndex.has(e.target))
-    .map((e) => ({ source: idToIndex.get(e.source)!, target: idToIndex.get(e.target)! }));
+    .filter((e) => typeof e.source === "string" && typeof e.target === "string" && idToIndex.has(e.source) && idToIndex.has(e.target))
+    .map((e) => ({ source: e.source, target: e.target }));
 
   type SimNode = { id: string; x: number; y: number };
+  type SimLink = { source: string; target: string };
 
-const simulation = forceSimulation<SimNode>(simNodes)
-    .force("link", forceLink<SimNode, { source: number; target: number }>(links).id((d) => d.id).distance(92).strength(0.35))
-    .force("charge", forceManyBody().strength(-280))
-    .force("center", forceCenter(W / 2, H / 2))
-    .force("collide", forceCollide().radius(30))
-    .stop();
-  for (let i = 0; i < ITERATIONS; i += 1) simulation.tick();
+  try {
+    const simulation = forceSimulation<SimNode>(simNodes)
+      .force("link", forceLink<SimNode, SimLink>(links).id((d) => d.id).distance(92).strength(0.35))
+      .force("charge", forceManyBody().strength(-280))
+      .force("center", forceCenter(W / 2, H / 2))
+      .force("collide", forceCollide().radius(30))
+      .stop();
+    for (let i = 0; i < ITERATIONS; i += 1) simulation.tick();
+  } catch {
+    // Keep the mesh usable if an upstream graph contains an invalid relationship.
+  }
   return simNodes;
 }
 
@@ -96,15 +101,13 @@ export function NetworkGraph({
     const maxX = Math.max(...xs) + 60;
     const minY = Math.min(...ys) - 60;
     const maxY = Math.max(...ys) + 60;
-    const k = Math.min(W / (maxX - minX), H / (maxY - minY), 1);
+    const k = Math.min(W / (maxX - minX), H / (maxY - minY), 1.25);
     setView({
       k,
       tx: (W - (maxX + minX) * k) / 2,
       ty: (H - (maxY + minY) * k) / 2,
     });
   }, [positions]);
-
-  const reset = () => setView({ k: 1, tx: 0, ty: 0 });
 
   const onWheel = (e: React.WheelEvent) => {
     const factor = e.deltaY < 0 ? 1.15 : 0.87;
@@ -203,10 +206,6 @@ export function NetworkGraph({
           })}
         </g>
       </svg>
-      <div className="hud-net-controls" style={{ position: "absolute", top: 10, right: 10, display: "flex", gap: 6 }}>
-        <button type="button" className="pill" onClick={() => setSelected(null)}>CLEAR</button>
-        <button type="button" className="pill" onClick={reset}>RESET</button>
-      </div>
       {selectedNode && (
         <div className="glass-strip hud-net-selection" style={{ position: "absolute", top: 10, left: 10 }}>
           {selectedNode.name} · {selectedNode.type} · {neighbors.size - 1} links · {selectedEdgeIds.size} relationships

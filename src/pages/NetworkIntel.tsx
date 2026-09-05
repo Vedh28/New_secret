@@ -46,7 +46,7 @@ export function NetworkIntel() {
   const influencers = useMemo(() => {
     const scored = graph.nodes.map((node) => ({
       node,
-      risk: (node.properties.risk as number) ?? (node.properties.risk_score as number) ?? 0,
+      risk: (node.properties?.risk as number) ?? (node.properties?.risk_score as number) ?? 0,
     }));
     scored.sort((a, b) => b.risk - a.risk);
     return scored.slice(0, 4);
