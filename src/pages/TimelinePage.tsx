@@ -1,16 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { HudPage } from "../components/HudPage";
 import { HudCard } from "../components/HudPrimitives";
+import { MapWindowChips } from "../components/InvestigationPanel";
 import { TemporalChangesList, AnomalyList } from "../components/IntelligenceUi";
 import { apiCaseTimeline, type TimelineEvent } from "../services/api";
 import { useCaseSelection } from "../services/useCaseSelection";
 import { useCaseIntelligence } from "../hooks/useCaseIntelligence";
+import { useMapStore } from "../store/mapStore";
 
 export function TimelinePage() {
   const { backend, cases, caseKey, setCaseKey } = useCaseSelection();
   const { intel } = useCaseIntelligence(caseKey);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const range = useMapStore((s) => s.range);
+
+  const visibleEvents = useMemo(() => {
+    if (!range) return events;
+    return events.filter((e) => e.timestamp >= range.start && e.timestamp <= range.end);
+  }, [events, range]);
 
   useEffect(() => {
     if (backend !== "backend" || !caseKey) {
@@ -27,7 +35,7 @@ export function TimelinePage() {
       title="TIMELINE"
       subtitle={backend === "backend" ? "Forensic chronological reconstruction + network evolution" : "Offline demo"}
       className="timeline-page"
-      rightMeta={<><div>{events.length} EVENTS</div>{backend === "backend" ? <div>LIVE</div> : <div>DEMO</div>}</>}
+      rightMeta={<><div>{visibleEvents.length} EVENTS</div>{backend === "backend" ? <div>LIVE</div> : <div>DEMO</div>}</>}
     >
       {backend === "backend" && (
         <HudCard label="Case" title="Investigation selector" className="hud-timeline-selector">
@@ -37,10 +45,13 @@ export function TimelinePage() {
           {error && <div className="meta" style={{ color: "var(--red, #ff5f56)" }}>{error}</div>}
         </HudCard>
       )}
+      <HudCard label="Time window" title="Synchronise map timeline">
+        <MapWindowChips />
+      </HudCard>
       <div className="hud-timeline-layout" style={{ marginTop: 16 }}>
         <HudCard label="Event sequence" title="Forensic chronology" className="hud-timeline-main">
           <div className="timeline-rail">
-            {(events.length ? events : (intel?.temporal_changes ?? [])).map((e: any, i) => {
+            {(visibleEvents.length ? visibleEvents : (intel?.temporal_changes ?? [])).map((e: any, i) => {
               const summary = e.summary ?? e.explanation ?? "";
               const ts = e.timestamp ?? "";
               const loc = e.location ?? "";
