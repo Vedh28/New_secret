@@ -18,6 +18,11 @@ email-validator>=2.1
 # Auth
 PyJWT>=2.8
 passlib[bcrypt]>=1.7
+# passlib 1.7.4 breaks with bcrypt>=4.1 (72-byte truncation in its backend probe)
+bcrypt>=4.0,<4.1
+
+# Multipart form uploads (FastAPI requires this at import time)
+python-multipart>=0.0.9
 
 # Data / analytics (used from Phase 8; installed now for parity)
 pandas>=2.2

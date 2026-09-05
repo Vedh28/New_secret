@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Shield, ChevronRight, Pin, Waves, ArrowUpRight } from "lucide-react";
-import { HoloList, HudCard, StatRow } from "../components/HudPrimitives";
-import { GlobeScene } from "../components/GlobeScene";
+import { ChevronRight, Pin, Waves, ArrowUpRight } from "lucide-react";
+import { HoloList, HudCard } from "../components/HudPrimitives";
+import { InvestigationMap } from "../components/InvestigationMap";
+import { MapControls, InvestigationIntelPanel } from "../components/InvestigationPanel";
 import {
   DnaPanel, PriorityPanel, RecommendationList, AnomalyList,
   PotentialLinksList, GapList, TemporalChangesList, IntelligenceSummary,
 } from "../components/IntelligenceUi";
 import { useBackendStore } from "../store/backend";
+import { useMapStore } from "../store/mapStore";
 import { apiDashboardSummary, type DashboardSummary } from "../services/api";
 import { useCaseIntelligence } from "../hooks/useCaseIntelligence";
 import { useCaseSelection } from "../services/useCaseSelection";
@@ -24,10 +26,16 @@ export function CommandCenter() {
   const backend = useBackendStore((s) => s.mode);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const { caseKey } = useCaseSelection();
-  const { intel } = useCaseIntelligence(caseKey);
+  const mapCaseKey = useMapStore((s) => s.selectedCaseId);
+  const effectiveCaseKey = mapCaseKey ?? caseKey;
+  const { intel } = useCaseIntelligence(effectiveCaseKey);
   const live = backend === "backend";
 
   useEffect(() => { const t = setInterval(() => setTick((v) => v + 1), 2500); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    if (backend === "checking") return;
+    void useMapStore.getState().load(backend);
+  }, [backend]);
   useEffect(() => {
     if (!live) return;
     apiDashboardSummary().then(setSummary).catch(() => {});
@@ -43,8 +51,8 @@ export function CommandCenter() {
 
   return (
     <div className="page command-center">
-      <div className="app-background-globe" aria-hidden="true">
-        <GlobeScene />
+      <div className="app-background-globe" aria-hidden="false">
+        <InvestigationMap />
       </div>
       <div className="command-title-row">
         <div className="command-topline">
@@ -136,6 +144,7 @@ export function CommandCenter() {
         </section>
 
         <section className="hud-center">
+          <MapControls />
           <div className="hud-overview-panel">
             <div className="hud-title-bar">NETWORK OVERVIEW</div>
             <div className="hud-globe-anchors">
@@ -145,6 +154,7 @@ export function CommandCenter() {
             </div>
           </div>
           {intel && <div className="hud-dna-panel"><DnaPanel dna={intel.network_dna} /></div>}
+          <InvestigationIntelPanel />
         </section>
 
         <section className="hud-col" style={{ display: "grid", gap: 18 }}>

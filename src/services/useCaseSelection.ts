@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useBackendStore } from "../store/backend";
+import { useMapStore } from "../store/mapStore";
 import { apiListCases, type CaseRead } from "./api";
 
 /**
@@ -28,6 +29,12 @@ export function useCaseSelection() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Keep the investigation map in sync: when any page settles on a case, the
+  // map highlights that case's locations on return to the Command Center.
+  useEffect(() => {
+    if (caseKey) useMapStore.getState().selectCase(caseKey);
+  }, [caseKey]);
 
   return { backend, cases, caseKey, setCaseKey, reload };
 }

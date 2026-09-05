@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from "d3";
 import type { GraphEdge, GraphNode } from "../services/api";
+import { useMapStore } from "../store/mapStore";
 
 const W = 800;
 const H = 520;
@@ -65,7 +66,7 @@ export function NetworkGraph({
   edges: GraphEdge[];
 }) {
   const positions = useMemo(() => layout(nodes, edges), [nodes, edges]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const selected = useMapStore((s) => s.selectedEntityId);
   const [view, setView] = useState<View>({ k: 1, tx: 0, ty: 0 });
   const drag = useRef<{ px: number; py: number; tx: number; ty: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -139,7 +140,7 @@ export function NetworkGraph({
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     drag.current = { px: e.clientX, py: e.clientY, tx: view.tx, ty: view.ty };
-    if (e.target === svgRef.current) setSelected(null);
+    if (e.target === svgRef.current) useMapStore.getState().selectEntity(null);
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const activeDrag = drag.current;
@@ -204,7 +205,7 @@ export function NetworkGraph({
                 transform={`translate(${p.x} ${p.y})`}
                 opacity={dimmed ? 0.18 : 1}
                 style={{ cursor: "pointer" }}
-                onPointerDown={(ev) => { ev.stopPropagation(); setSelected(n.id); }}
+                onPointerDown={(ev) => { ev.stopPropagation(); useMapStore.getState().selectEntity(n.id); }}
               >
                 {isSelected && <circle r={17} fill="none" stroke="var(--text)" strokeWidth={1.4} opacity={0.9} />}
                 {isNeighbor && !isSelected && <circle r={13} fill="none" stroke="var(--blue)" strokeWidth={1} opacity={0.6} />}
