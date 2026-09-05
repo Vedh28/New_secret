@@ -26,10 +26,11 @@ export function TimelinePage() {
     <HudPage
       title="TIMELINE"
       subtitle={backend === "backend" ? "Forensic chronological reconstruction + network evolution" : "Offline demo"}
+      className="timeline-page"
       rightMeta={<><div>{events.length} EVENTS</div>{backend === "backend" ? <div>LIVE</div> : <div>DEMO</div>}</>}
     >
       {backend === "backend" && (
-        <HudCard label="Case" title="Investigation selector">
+        <HudCard label="Case" title="Investigation selector" className="hud-timeline-selector">
           <select className="control hud-search" value={caseKey} onChange={(e) => setCaseKey(e.target.value)}>
             {cases.map((c) => <option key={c.case_number} value={c.case_number}>{c.case_number} · {c.title}</option>)}
           </select>

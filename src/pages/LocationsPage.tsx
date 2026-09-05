@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HudPage } from "../components/HudPage";
 import { HudCard, HoloList } from "../components/HudPrimitives";
 import { apiCaseLocations, type LocationsResponse } from "../services/api";
@@ -31,6 +31,67 @@ const OFFLINE_LOCATIONS: LocationsResponse = {
   ],
 };
 
+type LocationVisit = LocationsResponse["visits"][number];
+
+function OpenStreetMapSurface({ visits }: { visits: LocationVisit[] }) {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const coordinates = visits.map((visit) => ({
+    visit,
+    lat: Number.parseFloat(visit.latitude ?? ""),
+    lng: Number.parseFloat(visit.longitude ?? ""),
+  })).filter((entry) => Number.isFinite(entry.lat) && Number.isFinite(entry.lng));
+
+  useEffect(() => {
+    if (!mapRef.current || !coordinates.length) return;
+
+    const renderMap = () => {
+      const leaflet = (window as Window & { L?: any }).L;
+      if (!leaflet || !mapRef.current) return;
+      const map = leaflet.map(mapRef.current, { zoomControl: false, attributionControl: true });
+      leaflet.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(map);
+      coordinates.forEach(({ visit, lat, lng }) => {
+        leaflet.circleMarker([lat, lng], { radius: 8, color: "#07101f", weight: 2, fillColor: "#62d3ff", fillOpacity: 1 })
+          .addTo(map)
+          .bindTooltip(`${visit.location} · ${visit.entity_id}`, { permanent: true, direction: "top", className: "hud-map-tooltip" });
+      });
+      map.fitBounds(leaflet.latLngBounds(coordinates.map(({ lat, lng }) => [lat, lng])), { padding: [42, 42] });
+      setTimeout(() => map.invalidateSize(), 0);
+    };
+
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-leaflet="true"]');
+    if (!document.querySelector('link[data-leaflet-style="true"]')) {
+      const style = document.createElement("link");
+      style.rel = "stylesheet";
+      style.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      style.dataset.leafletStyle = "true";
+      document.head.appendChild(style);
+    }
+    if ((window as Window & { L?: any }).L) {
+      renderMap();
+      return;
+    }
+    if (existingScript) {
+      existingScript.addEventListener("load", renderMap, { once: true });
+      return () => existingScript.removeEventListener("load", renderMap);
+    }
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    script.async = true;
+    script.defer = true;
+    script.dataset.leaflet = "true";
+    script.addEventListener("load", renderMap, { once: true });
+    document.head.appendChild(script);
+    return () => script.removeEventListener("load", renderMap);
+  }, [visits]);
+
+  if (!coordinates.length) {
+    return <div className="meta hud-location-empty">No coordinates available for this case.</div>;
+  }
+  return <div ref={mapRef} className="hud-location-map-canvas" aria-label="OpenStreetMap of observed locations" />;
+}
+
 export function LocationsPage() {
   const { backend, cases, caseKey, setCaseKey } = useCaseSelection();
   const [data, setData] = useState<LocationsResponse>(EMPTY);
@@ -55,7 +116,6 @@ export function LocationsPage() {
 
   const hotspots = [...data.locations].sort((a, b) => b.observations - a.observations).slice(0, 6);
   const demoTags = backend === "backend";
-
   return (
     <HudPage
       title="LOCATION INTELLIGENCE"
@@ -71,15 +131,25 @@ export function LocationsPage() {
         </HudCard>
       )}
 
-      {caseIntel && (
-        <div className="hud-location-layout" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <HudCard label="Movement evidence" title="Location-focused signals">
-            <HoloList items={[
-              { label: "Bridge dependence", value: caseIntel.network_dna?.bridge_dependence ?? "—" },
-              { label: "Evidence nodes", value: String(caseIntel.evidence?.length ?? 0) },
-              { label: "Potential links", value: String(caseIntel.potential_links?.length ?? 0) },
-            ]} />
-          </HudCard>
+      <div className="hud-location-layout" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <HudCard label="Spatial surface" title="Observed Locations" className="hud-location-map">
+          <div className="hud-location-surface">
+            <OpenStreetMapSurface visits={data.visits} />
+            <div className="hud-location-summary">
+              <span>Mumbai region</span>
+              <strong>{hotspots.length} hotspots · {data.visits.length} visits</strong>
+            </div>
+          </div>
+        </HudCard>
+        <HudCard label="Entity sightings" title="Who was observed where">
+          <HoloList
+            items={data.visits.slice(0, 12).map((v) => ({
+              label: v.location,
+              value: `${v.entity_id}${v.latitude && v.longitude ? ` · ${v.latitude}, ${v.longitude}` : ""} · ${v.observations}`,
+            }))}
+          />
+        </HudCard>
+        {caseIntel && (
           <HudCard label="Spatial anomalies" title="Unusual location activity">
             <div className="stack">
               {(caseIntel.anomalies ?? []).filter((a) => a.kind === "LOCATION").slice(0, 3).map((a) => (
@@ -92,41 +162,21 @@ export function LocationsPage() {
               )}
             </div>
           </HudCard>
-        </div>
-      )}
-
-      <div className="hud-location-layout" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
-        <HudCard label="Spatial surface" title="Observed Locations" className="hud-location-map">
-          <div className="hud-surface-grid hud-surface-grid-alt" />
-          <div className="hud-location-overlay" style={{ marginTop: 12 }}>
-            <div className="glass-strip">Hotspots: {hotspots.length}</div>
-            <div className="glass-strip">Entity visits: {data.visits.length}</div>
+        )}
+        <HudCard label="Activity hotspots" title="Location Clusters">
+          <div className="stack">
+            {hotspots.map((h) => (
+              <div key={h.name} className="entity entity-tight">
+                <div>
+                  <div>{h.name}</div>
+                  <div className="meta">{h.observations} observations</div>
+                </div>
+                <div className="risk">{h.observations}</div>
+              </div>
+            ))}
+            {!hotspots.length && <div className="meta">No location entities yet for this case.</div>}
           </div>
         </HudCard>
-        <div style={{ display: "grid", gap: 16 }}>
-          <HudCard label="Activity hotspots" title="Location Clusters">
-            <div className="stack">
-              {hotspots.map((h) => (
-                <div key={h.name} className="entity entity-tight">
-                  <div>
-                    <div>{h.name}</div>
-                    <div className="meta">{h.observations} observations</div>
-                  </div>
-                  <div className="risk">{h.observations}</div>
-                </div>
-              ))}
-              {!hotspots.length && <div className="meta">No location entities yet for this case.</div>}
-            </div>
-          </HudCard>
-          <HudCard label="Entity sightings" title="Who was observed where">
-            <HoloList
-              items={data.visits.slice(0, 12).map((v) => ({
-                label: v.location,
-                value: `${v.entity_id}${v.latitude && v.longitude ? ` · ${v.latitude}, ${v.longitude}` : ""} · ${v.observations}`,
-              }))}
-            />
-          </HudCard>
-        </div>
       </div>
     </HudPage>
   );

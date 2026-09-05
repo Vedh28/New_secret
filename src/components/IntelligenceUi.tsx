@@ -47,21 +47,25 @@ export function PriorityPanel({ title, items }: { title: string; items: Priority
   );
 }
 
-export function AnomalyList({ anomalies }: { anomalies: Anomaly[] }) {
+export function AnomalyList({ anomalies, compact = false }: { anomalies: Anomaly[]; compact?: boolean }) {
   if (!anomalies?.length) return null;
+  const content = (
+    <div className="stack">
+      {anomalies.slice(0, 6).map((a, i) => (
+        <div key={`${a.kind}-${a.entity_id}-${i}`} className="alert high">
+          <div>
+            <div className="tag">{a.kind} · score {a.score}</div>
+            <div>{a.explanation}</div>
+            <div className="meta">{a.entity_id}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+  if (compact) return <div className="anomaly-list-compact">{content}</div>;
   return (
     <HudCard label="Anomaly intelligence" title="Unusual investigative signals">
-      <div className="stack">
-        {anomalies.slice(0, 6).map((a, i) => (
-          <div key={`${a.kind}-${a.entity_id}-${i}`} className="alert high">
-            <div>
-              <div className="tag">{a.kind} · score {a.score}</div>
-              <div>{a.explanation}</div>
-              <div className="meta">{a.entity_id}</div>
-            </div>
-          </div>
-        ))}
-      </div>
+      {content}
     </HudCard>
   );
 }

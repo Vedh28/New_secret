@@ -69,6 +69,17 @@ export function NetworkGraph({
   const [view, setView] = useState<View>({ k: 1, tx: 0, ty: 0 });
   const drag = useRef<{ px: number; py: number; tx: number; ty: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const blockPageZoom = (event: WheelEvent) => {
+      if (event.ctrlKey) event.preventDefault();
+    };
+    surface.addEventListener("wheel", blockPageZoom, { passive: false });
+    return () => surface.removeEventListener("wheel", blockPageZoom);
+  }, []);
 
   const posById = useMemo(() => new Map(positions.map((p) => [p.id, p])), [positions]);
 
@@ -101,7 +112,8 @@ export function NetworkGraph({
     const maxX = Math.max(...xs) + 60;
     const minY = Math.min(...ys) - 60;
     const maxY = Math.max(...ys) + 60;
-    const k = Math.min(W / (maxX - minX), H / (maxY - minY), 1.25);
+    const fit = Math.min(W / (maxX - minX), H / (maxY - minY));
+    const k = Math.min(4, fit * 1.45);
     setView({
       k,
       tx: (W - (maxX + minX) * k) / 2,
@@ -110,6 +122,8 @@ export function NetworkGraph({
   }, [positions]);
 
   const onWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     const factor = e.deltaY < 0 ? 1.15 : 0.87;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -128,11 +142,12 @@ export function NetworkGraph({
     if (e.target === svgRef.current) setSelected(null);
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!drag.current || !svgRef.current) return;
+    const activeDrag = drag.current;
+    if (!activeDrag || !svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
-    const dx = ((e.clientX - drag.current.px) * W) / rect.width;
-    const dy = ((e.clientY - drag.current.py) * H) / rect.height;
-    setView((v) => ({ ...v, tx: drag.current!.tx + dx, ty: drag.current!.ty + dy }));
+    const dx = ((e.clientX - activeDrag.px) * W) / rect.width;
+    const dy = ((e.clientY - activeDrag.py) * H) / rect.height;
+    setView((v) => ({ ...v, tx: activeDrag.tx + dx, ty: activeDrag.ty + dy }));
   };
   const onPointerUp = () => { drag.current = null; };
 
@@ -143,7 +158,7 @@ export function NetworkGraph({
   }
 
   return (
-    <div className="hud-net-surface">
+    <div ref={surfaceRef} className="hud-net-surface">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}

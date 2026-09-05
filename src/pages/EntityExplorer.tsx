@@ -50,48 +50,50 @@ export function EntityExplorer() {
   }, [backend, profiles, graph]);
 
   const filtered = useMemo(
-    () => rows.filter((e) => `${e.name} ${e.type} ${e.id}`.toLowerCase().includes(query.toLowerCase())),
-    [rows, query],
+    () => rows
+      .filter((e) => `${e.name} ${e.type} ${e.id}`.toLowerCase().includes(query.toLowerCase()))
+      .sort((a, b) => {
+        const priorityA = caseIntel?.entity_priorities.find((item) => item.subject === a.id)?.priority ?? -1;
+        const priorityB = caseIntel?.entity_priorities.find((item) => item.subject === b.id)?.priority ?? -1;
+        return priorityB - priorityA;
+      }),
+    [rows, query, caseIntel],
   );
+  const focusedEntity = selectedId ? rows.find((row) => row.id === selectedId) : null;
+  const focusedLinks = selectedId
+    ? graph.edges.filter((edge) => edge.source === selectedId || edge.target === selectedId).length
+    : 0;
+
+  useEffect(() => {
+    if (selectedId || !caseIntel?.entity_priorities.length) return;
+    const highestPriority = [...caseIntel.entity_priorities].sort((a, b) => b.priority - a.priority)[0];
+    if (rows.some((row) => row.id === highestPriority.subject)) setSelectedId(highestPriority.subject);
+  }, [caseIntel, rows, selectedId]);
 
   return (
     <HudPage title="ENTITY EXPLORER" subtitle={backend === "backend" ? "Live entity registry + graph nodes" : "Synthetic demo registry"} rightMeta={<><div>{filtered.length} RESULTS</div>{backend === "backend" ? <div>LIVE</div> : <div>DEMO</div>}</>}>
       <div className="hud-explorer-layout">
-        <HudCard label="Search console" title="Entity Query" className="hud-explorer-search">
-          <input className="control hud-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search entity, identifier, organization..." />
-          {error ? <div className="meta" style={{ color: "var(--red, #ff5f56)" }}>{error}</div> : null}
-        </HudCard>
-        <HudCard label="Result matrix" title="Matched Entities" className="hud-explorer-grid">
-          <div className="hud-entity-grid">
-            {filtered.map((e) => (
-              <button
-                className="hud-card hud-mini-card"
-                key={`${e.type}-${e.id}`}
-                onClick={() => setSelectedId(e.id)}
-                style={{ textAlign: "left", cursor: "pointer" }}
-              >
-                <div className="hud-label">{e.type}</div>
-                <h3>{e.name}</h3>
-                <div className="meta">
-                  {e.id}
-                  {typeof e.risk === "number" ? ` · Risk ${e.risk}` : ""}
-                  {typeof e.confidence === "number" ? ` · Confidence ${e.confidence}%` : ""}
-                  {typeof e.links === "number" ? ` · ${e.links} links` : ""}
-                </div>
-              </button>
-            ))}
-            {!filtered.length && <div className="meta">No entities found. Ingest a source to grow the registry.</div>}
-          </div>
-        </HudCard>
-        <HudCard label="Entity intelligence" title={selectedId ?? "Select an entity"} className="hud-explorer-intelligence">
+        <div className="hud-explorer-sidebar">
+          <HudCard label="Search console" title="Entity Query" className="hud-explorer-search">
+            <input className="control hud-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search entity, identifier, organization..." />
+            {error ? <div className="meta" style={{ color: "var(--red, #ff5f56)" }}>{error}</div> : null}
+          </HudCard>
+          <HudCard label="Entity intelligence" title={selectedId ?? "Select an entity"} className="hud-explorer-intelligence">
           {caseIntel && selectedId ? (
               <>
+                <div className="entity-intelligence-profile">
+                  <div><span>Profile</span><strong>{focusedEntity?.name ?? selectedId}</strong></div>
+                  <div><span>Type</span><strong>{focusedEntity?.type ?? "PERSON"}</strong></div>
+                  <div><span>Risk</span><strong>{focusedEntity?.risk ?? "-"}</strong></div>
+                  <div><span>Links</span><strong>{focusedEntity?.links ?? focusedLinks}</strong></div>
+                  <div className="meta">Active investigation · Last activity: 14 Aug 2026, 09:30</div>
+                </div>
                 <div className="meta">
                   Focus entity {selectedId}. Priority and anomaly signals below derive from the
                   unified intelligence engine.
                 </div>
                 {caseIntel.anomalies?.filter((a) => a.entity_id.includes(selectedId)).length ? (
-                  <AnomalyList anomalies={caseIntel.anomalies.filter((a) => a.entity_id.includes(selectedId))} />
+                  <AnomalyList compact anomalies={caseIntel.anomalies.filter((a) => a.entity_id.includes(selectedId))} />
                 ) : <div className="meta">No anomaly signals for this entity.</div>}
               </>
           ) : <div className="meta">
@@ -99,6 +101,33 @@ export function EntityExplorer() {
               ? "Intelligence data is loading for this entity."
               : "Select an entity from the result matrix to inspect its intelligence."}
           </div>}
+          </HudCard>
+        </div>
+        <HudCard label="Result matrix" title="Matched Entities" className="hud-explorer-grid">
+          <div className="hud-entity-grid">
+            {filtered.map((e) => {
+              const priority = caseIntel?.entity_priorities.find((item) => item.subject === e.id)?.priority;
+              return (
+                <button
+                  className={`hud-card hud-mini-card${selectedId === e.id ? " is-selected" : ""}`}
+                  key={`${e.type}-${e.id}`}
+                  onClick={() => setSelectedId(e.id)}
+                  style={{ textAlign: "left", cursor: "pointer" }}
+                >
+                  <div className="hud-label">{e.type}</div>
+                  <h3>{e.name}</h3>
+                  {typeof priority === "number" && <span className="entity-priority-badge">Priority {priority}</span>}
+                  <div className="meta">
+                    {e.id}
+                    {typeof e.risk === "number" ? ` · Risk ${e.risk}` : ""}
+                    {typeof e.confidence === "number" ? ` · Confidence ${e.confidence}%` : ""}
+                    {typeof e.links === "number" ? ` · ${e.links} links` : ""}
+                  </div>
+                </button>
+              );
+            })}
+            {!filtered.length && <div className="meta">No entities found. Ingest a source to grow the registry.</div>}
+          </div>
         </HudCard>
       </div>
 

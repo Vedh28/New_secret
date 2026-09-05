@@ -67,6 +67,8 @@ export function NetworkIntel() {
     return ranked;
   }, [graph]);
 
+  const peopleCount = graph.nodes.filter((node) => node.type?.toUpperCase() === "PERSON").length;
+
   // Community count: real Louvain clusters when online, connected components
   // of the visible graph when offline. Never node count.
   useEffect(() => {
@@ -93,27 +95,23 @@ export function NetworkIntel() {
       }
     >
       <div className="hud-network-layout">
-        <HudCard label="Filters" title="Signal Controls" className="hud-network-controls">
-          <div className="filters hud-filters">
-            <button className="pill">ENTITY TYPE</button>
-            <button className="pill">RELATIONSHIP TYPE</button>
-            <button className="pill">TIME RANGE</button>
-            <button className="pill">RISK LEVEL</button>
-            <button className="pill">CONFIDENCE</button>
-          </div>
-          <div className="hud-network-mini">
-            <div className="hud-network-orbit" />
-            <div className="hud-network-axis">
-              <span>Clustering</span>
-              <span>Propagation</span>
-              <span>Stability</span>
-            </div>
+        <HudCard label="Graph overview" title="Network Telemetry" className="hud-network-controls">
+          <div className="hud-network-telemetry">
+            <div><span>Nodes indexed</span><strong>{graph.nodes.length}</strong></div>
+            <div><span>Active links</span><strong>{graph.edges.length}</strong></div>
+            <div><span>Top connected entity</span><strong>{hot[0]?.node.name ?? "Awaiting data"}</strong></div>
+            <div><span>Evidence coverage</span><strong>{caseIntel?.network_dna?.evidence_coverage ?? 78}%</strong></div>
+            <div><span>Communities mapped</span><strong>{clusterCount}</strong></div>
+            <div><span>People involved</span><strong>{peopleCount}</strong></div>
           </div>
         </HudCard>
 
         <HudCard label="Graph surface" title="Network Mesh" className="hud-network-mesh">
           <div className="hud-net-graph">
-            <NetworkGraph nodes={graph.nodes} edges={graph.edges} />
+            <NetworkGraph
+              nodes={graph.nodes}
+              edges={graph.edges}
+            />
           </div>
           <div className="hud-network-overlay">
             <div className="glass-strip">{clusterCount} clusters mapped</div>

@@ -19,8 +19,12 @@
   --green:#4de0aa;
 }
 *{box-sizing:border-box}
-html,body,*{scrollbar-width:none}
-html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{display:none;width:0;height:0}
+html,body,*{scrollbar-width:thin;scrollbar-color:rgba(48,67,126,.9) transparent}
+html{scrollbar-gutter:stable}
+html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:8px;height:8px}
+html::-webkit-scrollbar-track,body::-webkit-scrollbar-track,*::-webkit-scrollbar-track{background:rgba(5,8,22,.72);border-radius:999px}
+html::-webkit-scrollbar-thumb,body::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(48,67,126,.95),rgba(29,42,86,.98));border:2px solid rgba(5,8,22,.82);border-radius:999px}
+html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,*::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#536aa8,#34477f)}
 html,body,#root{height:100%}
 body{margin:0;background:
 radial-gradient(circle at 50% 22%, rgba(23,34,83,.52), transparent 22%),
@@ -190,6 +194,8 @@ backdrop-filter:blur(28px);display:grid;gap:18px;box-shadow:0 28px 90px rgba(0,0
 .cta:hover{transform:translateY(-1px)}
 .nav-item:focus-visible,.icon-button:focus-visible,.cta:focus-visible,.pill:focus-visible,.control:focus-visible{outline:2px solid rgba(63,115,255,.9);outline-offset:2px}
 .control{min-height:44px;padding:12px 14px}
+select.control{appearance:none;-webkit-appearance:none;background-color:#0b1020;color:var(--text);color-scheme:dark;cursor:pointer}
+select.control option{background:#0b1020;color:var(--text)}
 .dashboard-grid{display:grid;grid-template-columns:1.45fr .95fr;gap:18px}
 .glass-strip{border:1px solid rgba(255,255,255,.05);background:rgba(255,255,255,.015);border-radius:999px;padding:8px 12px;color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
 .globe-frame{position:relative;height:620px;border-radius:24px;overflow:hidden;background:
@@ -281,14 +287,51 @@ linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
 linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);
 background-size:auto, auto, auto, auto, 100% 36px, 36px 100%}
 .hud-surface-grid-alt{height:420px}
+.hud-location-surface{height:420px;position:relative;border:1px solid rgba(96,184,255,.12);border-radius:10px;overflow:hidden;background:
+linear-gradient(rgba(4,8,22,.78), rgba(4,8,22,.88)),
+url('/textures/earth_day.jpg') center / cover,
+linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);background-blend-mode:normal,luminosity,normal,normal;background-size:auto,cover,100% 36px,36px 100%}
+.hud-location-map-canvas{position:absolute;inset:0;z-index:0}
+.hud-location-map-canvas.leaflet-container{height:100%;width:100%;background:#0b1224}
+.hud-location-map{align-self:start}
+.hud-location-map .hud-location-surface{height:420px}
+.hud-map-tooltip{background:rgba(5,8,22,.92);border:1px solid rgba(98,211,255,.28);border-radius:6px;box-shadow:none;color:var(--text);font:600 11px var(--font-sans);padding:4px 7px}
+.hud-map-tooltip:before{border-top-color:rgba(98,211,255,.28)}
+.hud-location-map-fallback{position:absolute;inset:0;display:grid;place-items:center;padding:20px;text-align:center;color:var(--muted);font-size:12px;z-index:2}
+.hud-location-map-fallback code{margin:0 4px;color:var(--cyan)}
+.hud-location-point{position:absolute;display:flex;align-items:center;gap:7px;transform:translate(-50%,-50%);z-index:1}
+.hud-location-point > span{width:12px;height:12px;border-radius:50%;background:var(--cyan);border:2px solid rgba(5,8,22,.9);box-shadow:0 0 0 5px rgba(98,211,255,.12),0 0 14px rgba(98,211,255,.45)}
+.hud-location-point div{padding:6px 8px;border:1px solid rgba(98,211,255,.18);border-radius:8px;background:rgba(5,8,22,.82);white-space:nowrap}
+.hud-location-point strong,.hud-location-point small{display:block}
+.hud-location-point strong{font-size:11px;color:var(--text)}
+.hud-location-point small{margin-top:2px;color:var(--muted);font-size:9px}
+.hud-location-summary{position:absolute;right:14px;top:14px;z-index:2;display:grid;gap:3px;padding:8px 10px;border:1px solid rgba(63,115,255,.24);border-radius:9px;background:rgba(5,8,22,.78)}
+.hud-location-summary span{color:var(--muted);font-size:9px;letter-spacing:.12em;text-transform:uppercase}
+.hud-location-summary strong{color:var(--text);font-size:11px}
+.hud-location-empty{position:absolute;inset:0;display:grid;place-items:center}
 .hud-network-layout,.hud-investigation-layout,.hud-explorer-layout,.hud-timeline-layout,.hud-alert-layout,.hud-reports-layout,.hud-settings-layout,.hud-placeholder-layout{display:grid;gap:18px}
 .hud-network-layout{grid-template-columns:.9fr 1.3fr .8fr}
 .hud-network-controls{height:380px;min-height:380px;align-self:start}
 .hud-network-mini{display:grid;gap:12px;margin-top:12px}
-.hud-network-orbit{height:120px;border-radius:50%;border:1px solid rgba(63,115,255,.26);background:radial-gradient(circle, rgba(63,115,255,.12) 0 10%, transparent 10% 35%, rgba(30,162,255,.10) 35% 36%, transparent 36%);box-shadow:0 0 18px rgba(63,115,255,.08)}
-.hud-network-axis{display:flex;justify-content:space-between;gap:10px;color:var(--muted);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+.hud-network-orbit{height:120px;border-radius:50%;border:1px solid rgba(63,115,255,.26);background:radial-gradient(circle, rgba(63,115,255,.12) 0 10%, transparent 10% 35%, rgba(30,162,255,.10) 35% 36%, transparent 36%);box-shadow:0 0 18px rgba(63,115,255,.08);position:relative;overflow:hidden}
+.hud-network-orbit-core{position:absolute;inset:calc(50% - 14px);border-radius:50%;background:rgba(63,115,255,.16);box-shadow:0 0 22px rgba(63,115,255,.34)}
+.hud-network-orbit-pulse{position:absolute;inset:calc(50% - 28px);border:1px solid rgba(98,211,255,.55);border-radius:50%;animation:hud-orbit-pulse 2.8s ease-out infinite}
+.hud-network-axis span{display:grid;gap:4px}
+.hud-network-axis strong{color:var(--text);font:600 15px/1 "Fira Code",monospace;letter-spacing:.04em}
+.hud-network-telemetry{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hud-network-telemetry div{min-height:68px;padding:12px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:rgba(255,255,255,.025);display:grid;align-content:space-between;gap:8px}
+.hud-network-telemetry span{color:var(--muted);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.hud-network-telemetry strong{color:var(--text);font:600 17px/1.1 "Fira Code",monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@keyframes hud-orbit-pulse{0%{transform:scale(.65);opacity:.8}70%,100%{transform:scale(1.7);opacity:0}}
 .hud-network-mesh{height:380px;min-height:380px;align-self:start;position:relative}
 .hud-network-mesh .hud-net-graph{top:78px;bottom:auto;min-height:0;height:280px}
+.hud-network-signal-summary{display:grid;gap:9px}
+.hud-network-signal-summary div{display:grid;grid-template-columns:110px 1fr;align-items:baseline;gap:8px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.07)}
+.hud-network-signal-summary div:last-child{border-bottom:0}
+.hud-network-signal-summary span,.hud-network-signal-summary em{color:var(--muted);font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-style:normal}
+.hud-network-signal-summary strong{color:var(--text);font-size:14px;text-transform:uppercase}
+.hud-network-signal-summary em{grid-column:2;font-size:9px;opacity:.75}
 .hud-network-overlay{position:absolute;left:18px;bottom:16px;right:18px;display:flex;gap:10px;justify-content:space-between}
 .hud-net-graph{position:absolute;left:14px;right:14px;top:8px;bottom:52px}
 .hud-net-surface{position:absolute;inset:0}
@@ -296,10 +339,10 @@ background-size:auto, auto, auto, auto, 100% 36px, 36px 100%}
 .hud-net-controls button{pointer-events:auto;font-size:10px;padding:6px 10px}
 .hud-network-side{display:grid;gap:16px}
 @media (min-width: 1201px){
-  .hud-network-layout{grid-template-columns:.8fr 1.2fr;align-items:start}
-  .hud-network-controls{grid-column:1}
-  .hud-network-mesh{grid-column:2}
-  .hud-network-side{grid-column:1 / -1;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
+  .hud-network-layout{grid-template-columns:1.2fr .8fr;align-items:start}
+  .hud-network-mesh{grid-column:1;grid-row:1}
+  .hud-network-controls{grid-column:2;grid-row:1}
+  .hud-network-side{grid-column:1 / -1;grid-row:2;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
   .hud-network-side > .hud-card{min-height:260px}
 }
 .hud-investigation-layout{grid-template-columns:1.05fr .85fr}
@@ -314,12 +357,25 @@ background-size:auto, auto, auto, auto, 100% 36px, 36px 100%}
 .hud-investigation-bands{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
 .entity-tight{padding:11px 13px}
 .hud-explorer-layout{grid-template-columns:280px minmax(0,1fr);align-items:start;align-content:start}
-.hud-explorer-search{min-height:220px;position:sticky;top:16px;grid-column:1;grid-row:1}
+.hud-explorer-sidebar{display:grid;gap:18px;align-content:start}
+.hud-explorer-search{min-height:220px}
 .hud-search-hints{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
-.hud-explorer-grid{min-height:620px;grid-column:2;grid-row:1 / span 2}
+.hud-explorer-grid{min-height:620px;grid-column:2;grid-row:1}
 .hud-explorer-grid .hud-entity-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));align-content:start;gap:12px}
 .hud-explorer-grid .hud-mini-card{min-height:150px}
-.hud-explorer-intelligence{grid-column:1;grid-row:2;margin-top:-18px}
+.hud-explorer-grid .hud-mini-card.is-selected{border-color:rgba(255,196,82,.9);box-shadow:0 0 0 1px rgba(255,196,82,.25),0 0 22px rgba(255,174,0,.16)}
+.entity-priority-badge{padding:4px 7px;border:1px solid rgba(255,180,188,.35);border-radius:999px;color:#ffb4bc;font:600 9px/1 "Fira Code",monospace;letter-spacing:.06em;text-transform:uppercase}
+.entity-intelligence-profile{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.entity-intelligence-profile div:not(.meta){padding:8px 9px;border:1px solid rgba(255,255,255,.07);border-radius:10px;background:rgba(255,255,255,.025);display:grid;gap:4px}
+.entity-intelligence-profile span{color:var(--muted);font-size:9px;letter-spacing:.08em;text-transform:uppercase}
+.entity-intelligence-profile strong{color:var(--text);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.entity-intelligence-profile .meta{grid-column:1 / -1;font-size:10px}
+.hud-explorer-intelligence{grid-column:1;grid-row:auto}
+.timeline-page .hud-timeline-selector{max-width:100%;min-height:0}
+.timeline-page .hud-timeline-layout{grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr);align-items:start}
+.timeline-page .hud-timeline-main{min-height:620px}
+.timeline-page .hud-timeline-side{min-width:0;align-content:start}
+.timeline-page .hud-timeline-side > .hud-card{min-width:0}
 .hud-timeline-layout{grid-template-columns:1fr .7fr}
 .timeline-rail{display:grid;gap:12px}
 .timeline-row{display:grid;grid-template-columns:18px 1fr;gap:12px;align-items:start}
@@ -389,7 +445,7 @@ box-shadow:0 0 20px rgba(63,115,255,.08)}
   .panel-footer-grid{grid-template-columns:1fr}
   .hud-grid,.hud-bottom,.hud-bottom-alt{grid-template-columns:1fr}
   .hud-network-layout,.hud-investigation-layout,.hud-explorer-layout,.hud-timeline-layout,.hud-alert-layout,.hud-reports-layout,.hud-settings-layout,.hud-placeholder-layout,.hud-bottom-tight{grid-template-columns:1fr}
-  .hud-explorer-search,.hud-explorer-grid,.hud-explorer-intelligence{grid-column:auto;grid-row:auto;margin-top:0}
+  .hud-explorer-search,.hud-explorer-grid,.hud-explorer-intelligence{grid-column:auto;grid-row:auto;margin-top:0;transform:none}
   .top-nav{flex-direction:column;align-items:flex-start}
   .top-nav-links{justify-content:flex-start}
   body{overflow:auto}

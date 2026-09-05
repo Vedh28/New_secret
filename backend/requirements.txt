@@ -26,6 +26,7 @@ scikit-learn>=1.5
 
 # Structured file ingestion (XLSX). Optional: parser degrades gracefully.
 openpyxl>=3.1
+python-multipart>=0.0.9
 
 # HTTP client / CORS / TestClient
 httpx>=0.27
