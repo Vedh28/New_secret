@@ -5,10 +5,14 @@
  * visual language is introduced. All values derive from `useMapStore` — no
  * analytic numbers are invented here.
  */
-import { useMemo } from "react";
-import { RotateCcw, Map as MapIcon, Crosshair } from "lucide-react";
+import { useMemo, useState } from "react";
+import { RotateCcw, Map as MapIcon, Crosshair, Search, MapPin, X } from "lucide-react";
 import { useMapStore } from "../store/mapStore";
 import { useAppStore } from "../store";
+import citiesData from "../data/map/cities.json";
+import transitData from "../data/map/transit.json";
+import districtsData from "../data/map/maharashtra-districts.json";
+import indiaStatesData from "../data/map/india-states.json";
 
 function Toggle({ label, value, onToggle }: { label: string; value: boolean; onToggle: () => void }) {
   return (
@@ -62,15 +66,198 @@ export function MapWindowChips() {
   );
 }
 
+/** Pre-indexed places for global search & zoom */
+type SearchItem = {
+  name: string;
+  type: "city" | "district" | "station" | "state" | "case" | "location";
+  label: string;
+  lat: number;
+  lon: number;
+  zoomDist: number;
+};
+
 export function MapControls() {
   const store = useMapStore;
+  const markers = useMapStore((s) => s.markers);
   const showCases = useMapStore((s) => s.showCases);
   const showLocations = useMapStore((s) => s.showLocations);
   const showRoutes = useMapStore((s) => s.showRoutes);
   const showLabels = useMapStore((s) => s.showLabels);
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showResults, setShowResults] = useState(false);
+
+  // Search catalog index across all geographic entities
+  const searchIndex = useMemo<SearchItem[]>(() => {
+    const items: SearchItem[] = [];
+
+    // Cities
+    (citiesData as { cities: { name: string; lat: number; lon: number; major: boolean }[] }).cities.forEach((c) => {
+      items.push({
+        name: c.name,
+        type: "city",
+        label: `${c.name} · City`,
+        lat: c.lat,
+        lon: c.lon,
+        zoomDist: c.major ? 38 : 30,
+      });
+    });
+
+    // Maharashtra Districts
+    (districtsData as { districts: { name: string; polygons: number[][][][] }[] }).districts.forEach((d) => {
+      let latSum = 0, lonSum = 0, count = 0;
+      d.polygons.forEach((poly) => {
+        poly.forEach((ring) => {
+          ring.forEach(([lon, lat]) => {
+            latSum += lat;
+            lonSum += lon;
+            count++;
+          });
+        });
+      });
+      if (count > 0) {
+        items.push({
+          name: d.name,
+          type: "district",
+          label: `${d.name} · District (MH)`,
+          lat: latSum / count,
+          lon: lonSum / count,
+          zoomDist: 34,
+        });
+      }
+    });
+
+    // Transit Stations
+    (transitData as { stations: { code: string; name: string; city: string; lat: number; lon: number }[] }).stations.forEach((st) => {
+      items.push({
+        name: st.name,
+        type: "station",
+        label: `${st.name} [${st.code}] · Rail Station`,
+        lat: st.lat,
+        lon: st.lon,
+        zoomDist: 26,
+      });
+    });
+
+    // Indian States
+    (indiaStatesData as { states: { name: string; polygons: number[][][][] }[] }).states.forEach((s) => {
+      let latSum = 0, lonSum = 0, count = 0;
+      s.polygons.forEach((poly) => {
+        poly.forEach((ring) => {
+          ring.forEach(([lon, lat]) => {
+            latSum += lat;
+            lonSum += lon;
+            count++;
+          });
+        });
+      });
+      if (count > 0) {
+        items.push({
+          name: s.name,
+          type: "state",
+          label: `${s.name} · State`,
+          lat: latSum / count,
+          lon: lonSum / count,
+          zoomDist: 90,
+        });
+      }
+    });
+
+    // Case locations
+    markers.forEach((m) => {
+      items.push({
+        name: m.title,
+        type: "case",
+        label: `${m.caseId}: ${m.title}`,
+        lat: m.locations.reduce((s, l) => s + l.latitude, 0) / Math.max(1, m.locations.length),
+        lon: m.locations.reduce((s, l) => s + l.longitude, 0) / Math.max(1, m.locations.length),
+        zoomDist: 40,
+      });
+      m.locations.forEach((loc) => {
+        items.push({
+          name: loc.name,
+          type: "location",
+          label: `${loc.name} · Incident Point`,
+          lat: loc.latitude,
+          lon: loc.longitude,
+          zoomDist: 24,
+        });
+      });
+    });
+
+    return items;
+  }, [markers]);
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return searchIndex.filter((item) =>
+      item.name.toLowerCase().includes(q) || item.label.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [searchQuery, searchIndex]);
+
+  const handleSelectPlace = (item: SearchItem) => {
+    store.getState().flyToGeo(item.lat, item.lon, item.zoomDist);
+    setSearchQuery(item.name);
+    setShowResults(false);
+  };
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (filtered.length > 0) {
+      handleSelectPlace(filtered[0]);
+    }
+  };
+
   return (
     <div className="map-controls">
+      {/* Search and Zoom Input */}
+      <div className="map-search-bar-wrap">
+        <form onSubmit={handleSearchSubmit} className="map-search-form">
+          <Search size={14} className="map-search-icon" />
+          <input
+            type="text"
+            className="map-search-input"
+            placeholder="Search place, city, district, station, state..."
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setShowResults(true);
+            }}
+            onFocus={() => setShowResults(true)}
+            aria-label="Search and zoom to place"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className="map-search-clear"
+              onClick={() => {
+                setSearchQuery("");
+                setShowResults(false);
+              }}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </form>
+
+        {showResults && filtered.length > 0 && (
+          <div className="map-search-results">
+            {filtered.map((item, idx) => (
+              <button
+                key={`${item.type}-${item.name}-${idx}`}
+                className="map-search-item"
+                onClick={() => handleSelectPlace(item)}
+              >
+                <MapPin size={12} className={`map-search-type-icon ${item.type}`} />
+                <span className="map-search-item-label">{item.label}</span>
+                <span className="map-search-item-type">{item.type}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="map-controls-row">
         <button className="pill map-control-btn" onClick={() => store.getState().requestCamera("reset")} title="Reset camera">
           <RotateCcw size={12} /> RESET

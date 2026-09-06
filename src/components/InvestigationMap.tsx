@@ -1,4 +1,4 @@
-﻿/**
+/**
  * InvestigationMap — interactive 3D geospatial intelligence map.
  *
  * Renders REAL geography from bundled data: SRTM elevation relief, Maharashtra
@@ -19,15 +19,17 @@ import {
 } from "./terrain";
 import type { CaseLocation, CaseMarker } from "../types";
 import indiaData from "../data/map/india.json";
+import indiaStatesData from "../data/map/india-states.json";
 import maharashtraData from "../data/map/maharashtra.json";
 import contextData from "../data/map/context.json";
 import districtsData from "../data/map/maharashtra-districts.json";
 import citiesData from "../data/map/cities.json";
 import riversData from "../data/map/rivers.json";
+import transitData from "../data/map/transit.json";
 
-// Layer thicknesses (world units): silhouettes below the Maharashtra chassis.
-const INDIA_DEPTH = 0.3;
-const CONTEXT_DEPTH = 0.42;
+// Layer thicknesses (world units):
+const INDIA_DEPTH = 0.35;
+const STATE_DEPTH = 0.42;
 const MAHA_DEPTH = CHASSIS_TOP;
 
 const MUMBAI_DISTRICTS = new Set(["Greater Bombay", "Thane"]);
@@ -40,6 +42,7 @@ const PRIORITY_SPRITE: Record<string, string> = {
   LOW: "rgba(223,248,238,1)|rgba(89,212,160,0.92)|rgba(30,100,70,0)",
 };
 const LOCATION_GLOW = "rgba(223,248,255,1)|rgba(99,215,255,0.85)|rgba(30,70,140,0)";
+const TRAIN_STATION_GLOW = "rgba(255,230,160,1)|rgba(245,158,11,0.9)|rgba(120,60,10,0)";
 
 function splitStyle(key: string): { inner: string; mid: string; outer: string } {
   const [inner, mid, outer] = key.split("|");
@@ -182,11 +185,16 @@ function addEdgeLines(
 }
 
 function outerRingIndex(poly: number[][][]): number {
-  if (!poly.length) return 0;
+  if (!poly || !Array.isArray(poly) || !poly.length) return 0;
   let max = -1, idx = 0;
   poly.forEach((ring, i) => {
+    if (!ring || !Array.isArray(ring) || ring.length < 2) return;
     let a = 0;
-    for (let k = 0; k < ring.length - 1; k++) a += ring[k][0] * ring[k + 1][1] - ring[k + 1][0] * ring[k][1];
+    for (let k = 0; k < ring.length - 1; k++) {
+      if (Array.isArray(ring[k]) && Array.isArray(ring[k + 1])) {
+        a += ring[k][0] * ring[k + 1][1] - ring[k + 1][0] * ring[k][1];
+      }
+    }
     const abs = Math.abs(a);
     if (abs > max) { max = abs; idx = i; }
   });
@@ -209,22 +217,22 @@ export function createInvestigationMap(
   scene.background = new THREE.Color(0x02040a);
   scene.fog = new THREE.FogExp2(0x03060d, 0.0011);
 
-  const camera = new THREE.PerspectiveCamera(40, host.clientWidth / Math.max(1, host.clientHeight), 0.1, 900);
-  const DEFAULT_TARGET = new THREE.Vector3(-121, 4, 9);
+  const camera = new THREE.PerspectiveCamera(40, host.clientWidth / Math.max(1, host.clientHeight), 0.1, 1500);
+  const DEFAULT_TARGET = new THREE.Vector3(0, 4, 0);
   const resetPos = () => {
-    const DIST = 132;
-    const elev = (46 * Math.PI) / 180;
-    const az = -2.55;
+    const DIST = 340;
+    const elev = (55 * Math.PI) / 180;
+    const az = 0; // Standard geographic orientation: North is Up, South is Down
     camera.position.set(
       DEFAULT_TARGET.x + Math.sin(az) * Math.cos(elev) * DIST,
       DEFAULT_TARGET.y + Math.sin(elev) * DIST,
-      DEFAULT_TARGET.z + Math.cos(az) * Math.cos(elev) * DIST,
+      DEFAULT_TARGET.z + Math.cos(elev) * DIST,
     );
   };
   resetPos();
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(host.clientWidth, Math.max(1, host.clientHeight));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setClearColor(0x02040a, 1);
@@ -258,6 +266,17 @@ export function createInvestigationMap(
   const labelGroup = new THREE.Group();
   scene.add(geoGroup, staticGroup, markerGroup, routeGroup, labelGroup);
 
+  // Shared dynamic & probe arrays
+  const hitProbes: HitProbe[] = [];
+  const districtHitProbes: HitProbe[] = [];
+  const comets: Comet[] = [];
+  const pulse: PulseItem[] = [];
+  const halos: Halo[] = [];
+  const caseTexCache = new Map<string, THREE.CanvasTexture>();
+  const labelTexCache = new Map<string, THREE.CanvasTexture>();
+  const locTex = makeSpriteTexture(splitStyle(LOCATION_GLOW));
+  const cometTex = makeSpriteTexture(splitStyle("rgba(255,255,255,1)|rgba(140,235,255,0.9)|rgba(40,90,180,0)"));
+
   // ----- Ocean surface --------------------------------------------------------
   const oceanGeo = new THREE.PlaneGeometry(720, 560);
   oceanGeo.rotateX(-Math.PI / 2);
@@ -275,8 +294,6 @@ export function createInvestigationMap(
     color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false,
   });
 
-  const midLat = (MAP_BOUNDS.minLat + MAP_BOUNDS.maxLat) / 2;
-  const midLon = (MAP_BOUNDS.minLon + MAP_BOUNDS.maxLon) / 2;
   const indiaShape = buildExtruded(
     (indiaData as { polygons: Polygons }).polygons, toXY, INDIA_DEPTH,
     new THREE.MeshStandardMaterial({ color: 0x0a1628, transparent: true, opacity: 0.55, emissive: 0x0a1e3a, roughness: 0.95, metalness: 0.05, side: THREE.DoubleSide }),
@@ -287,80 +304,207 @@ export function createInvestigationMap(
   );
   geoGroup.add(indiaShape.group, mahaShape.group);
 
-  // Adjacent-state silhouettes (named, for labels + realistic context).
-  (contextData as { states: { name: string; polygons: Polygons }[] }).states.forEach((s) => {
+  // Render All Indian States (Extruded polygons + glowing boundary lines)
+  (indiaStatesData as { states: { name: string; polygons: Polygons }[] }).states.forEach((s) => {
+    const isMaha = s.name === "Maharashtra";
+    const depth = isMaha ? MAHA_DEPTH : STATE_DEPTH;
     const built = buildExtruded(
-      s.polygons, toXY, CONTEXT_DEPTH,
-      new THREE.MeshStandardMaterial({ color: 0x0c1a35, transparent: true, opacity: 0.6, emissive: 0x0c2248, roughness: 0.95, metalness: 0.05, side: THREE.DoubleSide }),
+      s.polygons, toXY, depth,
+      new THREE.MeshStandardMaterial({
+        color: isMaha ? 0x143c6d : 0x0a1c36,
+        emissive: isMaha ? 0x0c2950 : 0x08162d,
+        roughness: 0.9,
+        metalness: 0.1,
+        flatShading: true,
+        side: THREE.DoubleSide
+      }),
     );
     geoGroup.add(built.group);
-    addEdgeLines(built.edges, edgeMat(0x1f4c8a, 0.28), geoGroup, () => CONTEXT_DEPTH);
+    addEdgeLines(
+      built.edges,
+      edgeMat(isMaha ? 0x8ff0ff : 0x3d7cc9, isMaha ? 0.8 : 0.45),
+      geoGroup,
+      () => depth + 0.05
+    );
   });
 
-  // ----- Relief terrain (displaced SRTM surface, clipped to Maharashtra) ---------
-  const reliefGeo = new THREE.PlaneGeometry(
-    (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon) * K_LON,
-    (MAP_BOUNDS.maxLat - MAP_BOUNDS.minLat) * K_LAT,
-    164, 128,
-  );
-  reliefGeo.rotateX(-Math.PI / 2);
-  const rPos = reliefGeo.attributes.position as THREE.BufferAttribute;
-  const colors = new Float32Array(rPos.count * 3);
-  for (let i = 0; i < rPos.count; i += 1) {
-    const x = rPos.getX(i), z = rPos.getZ(i);
-    const lat = midLat + z / K_LAT;
-    const lon = midLon + x / K_LON;
-    rPos.setY(i, elevationWorldAt(lat, lon));
-    const c = reliefVertexColor(elevationAt(lat, lon));
-    colors[i * 3] = c[0] / 255; colors[i * 3 + 1] = c[1] / 255; colors[i * 3 + 2] = c[2] / 255;
-  }
-  reliefGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  reliefGeo.computeVertexNormals();
-  const relief = new THREE.Mesh(reliefGeo, new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    transparent: true,
-    alphaMap: landMaskTexture(),
-    alphaTest: 0.5,
-    roughness: 0.97,
-    metalness: 0.04,
-    emissive: 0x0b2440,
-    emissiveIntensity: 0.35,
-    side: THREE.DoubleSide,
-  }));
-  geoGroup.add(relief);
+  // Country outline glow
+  addEdgeLines(indiaShape.edges, edgeMat(0x60b0ff, 0.75), geoGroup, () => INDIA_DEPTH + 0.08);
 
-  // --- District boundary lines riding the relief surface ---
-  (districtsData as { districts: { name: string; polygons: Polygons }[] }).districts.forEach((d) => {
-    d.polygons.forEach((poly) => {
-      const ring = poly[outerRingIndex(poly)];
-      const mumbai = MUMBAI_DISTRICTS.has(d.name);
-      addEdgeLines(
-        [ring.map(([lon, lat]) => { const p = toXY(lon, lat); return { x: p.x, z: p.y }; })],
-        edgeMat(mumbai ? 0x6ff0ff : 0x2f86c9, mumbai ? 0.85 : 0.4),
-        geoGroup,
-        (x, z) => elevationWorldAtXY(x, z) + 0.3,
-      );
+  // --- Maharashtra Perimeter Margin Boundary Line (Double Tactical Halo) ---
+  addEdgeLines(mahaShape.edges, edgeMat(0x00f5ff, 0.95), geoGroup, () => MAHA_DEPTH + 0.16);
+  addEdgeLines(mahaShape.edges, edgeMat(0x38bdf8, 0.4), geoGroup, () => MAHA_DEPTH + 0.32);
+
+  // --- District boundary lines riding the Maharashtra relief surface ---
+  if (districtsData && Array.isArray((districtsData as { districts?: unknown[] }).districts)) {
+    (districtsData as { districts: { name: string; polygons: Polygons }[] }).districts.forEach((d) => {
+      if (!d || !Array.isArray(d.polygons)) return;
+      d.polygons.forEach((poly) => {
+        if (!poly || !Array.isArray(poly) || !poly.length) return;
+        const ring = poly[outerRingIndex(poly)] || poly[0];
+        if (!ring || !Array.isArray(ring) || ring.length < 2) return;
+        const mumbai = MUMBAI_DISTRICTS.has(d.name);
+        const validPts = ring.filter((pt) => Array.isArray(pt) && pt.length >= 2 && typeof pt[0] === "number" && typeof pt[1] === "number");
+        if (validPts.length < 2) return;
+        addEdgeLines(
+          [validPts.map(([lon, lat]) => { const p = toXY(lon, lat); return { x: p.x, z: -p.y }; })],
+          edgeMat(mumbai ? 0x6ff0ff : 0x2f86c9, mumbai ? 0.75 : 0.35),
+          geoGroup,
+          (x, z) => elevationWorldAtXY(x, -z) + 0.2,
+        );
+      });
+    });
+  }
+
+  // --- Maharashtra Imaginary Inter-District Connectivity Mesh & Margin Grid ---
+  const districtNodes: { name: string; lat: number; lon: number }[] = [];
+  if (districtsData && Array.isArray((districtsData as { districts?: unknown[] }).districts)) {
+    (districtsData as { districts: { name: string; polygons: Polygons }[] }).districts.forEach((d) => {
+      if (!d || !Array.isArray(d.polygons)) return;
+      let latSum = 0, lonSum = 0, count = 0;
+      d.polygons.forEach((poly) => {
+        if (!poly || !Array.isArray(poly) || !poly.length) return;
+        const ring = poly[outerRingIndex(poly)] || poly[0];
+        if (ring && Array.isArray(ring)) {
+          ring.forEach((pt) => {
+            if (Array.isArray(pt) && pt.length >= 2 && typeof pt[0] === "number" && typeof pt[1] === "number") {
+              lonSum += pt[0];
+              latSum += pt[1];
+              count += 1;
+            }
+          });
+        }
+      });
+      if (count > 0) {
+        districtNodes.push({ name: d.name, lat: latSum / count, lon: lonSum / count });
+      }
+    });
+  }
+
+  // Hub dot texture
+  const hubTex = makeSpriteTexture(splitStyle("rgba(200,250,255,1)|rgba(0,229,255,0.9)|rgba(0,80,180,0)"));
+  const connMeshMat = new THREE.LineBasicMaterial({
+    color: 0x00e5ff,
+    transparent: true,
+    opacity: 0.38,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const connBackboneMat = new THREE.LineBasicMaterial({
+    color: 0x38bdf8,
+    transparent: true,
+    opacity: 0.65,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  // Inter-district imaginary connectivity lines
+  const connectedPairs = new Set<string>();
+  const addConnectivityLine = (d1: { lat: number; lon: number; name: string }, d2: { lat: number; lon: number; name: string }, isBackbone = false) => {
+    const key = [d1.name, d2.name].sort().join("::");
+    if (connectedPairs.has(key)) return;
+    connectedPairs.add(key);
+
+    const p1 = project(d1.lat, d1.lon);
+    const p2 = project(d2.lat, d2.lon);
+    const y1 = elevationWorldAtXY(p1.x, p1.y) + 0.35;
+    const y2 = elevationWorldAtXY(p2.x, p2.y) + 0.35;
+
+    const numSegs = 16;
+    const pts: THREE.Vector3[] = [];
+    for (let k = 0; k <= numSegs; k++) {
+      const t = k / numSegs;
+      const x = THREE.MathUtils.lerp(p1.x, p2.x, t);
+      const y = THREE.MathUtils.lerp(p1.y, p2.y, t);
+      const elev = elevationWorldAtXY(x, y) + 0.35;
+      const arc = Math.sin(t * Math.PI) * (isBackbone ? 2.5 : 1.2);
+      pts.push(new THREE.Vector3(x, elev + arc, -y));
+    }
+
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      isBackbone ? connBackboneMat : connMeshMat,
+    );
+    geoGroup.add(line);
+  };
+
+  // Expose on window for runtime and console scripts
+  if (typeof window !== "undefined") {
+    (window as unknown as { MAHARASHTRA_DISTRICTS_DATA: unknown }).MAHARASHTRA_DISTRICTS_DATA = (districtsData as { districts: unknown }).districts;
+  }
+
+  // Connect nearest district neighbors (imaginary connectivity web)
+  districtNodes.forEach((d1, i) => {
+    // Add small telemetry node at district centroid
+    const p = project(d1.lat, d1.lon);
+    const base = elevationWorldAtXY(p.x, p.y);
+    const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: hubTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    dot.position.set(p.x, base + 0.45, -p.y);
+    dot.scale.set(2.2, 2.2, 1);
+    geoGroup.add(dot);
+
+    // Hit probe for clicking and hovering on the district
+    const probePos = new THREE.Vector3(p.x, base + 0.45, -p.y);
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(3.2, 6, 6),
+      new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
+    );
+    mesh.position.copy(probePos);
+    mesh.userData = { kind: "district", id: d1.name, lat: d1.lat, lon: d1.lon };
+    geoGroup.add(mesh);
+    const probe = mesh as unknown as HitProbe;
+    hitProbes.push(probe);
+    districtHitProbes.push(probe);
+
+    const neighbors = districtNodes
+      .filter((_, idx) => idx !== i)
+      .map((d2) => ({ d2, dist: Math.hypot(d1.lon - d2.lon, (d1.lat - d2.lat) * 1.05) }))
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 3);
+
+    neighbors.forEach(({ d2, dist }) => {
+      if (dist < 1.75) {
+        addConnectivityLine(d1, d2, false);
+      }
     });
   });
 
-  // State coastline (brightest) + silhouette edges on the relief.
-  addEdgeLines(mahaShape.edges, edgeMat(0x8ff0ff, 0.7), geoGroup, (x, z) => elevationWorldAtXY(x, z) + 0.34);
-  addEdgeLines(indiaShape.edges, edgeMat(0x15365e, 0.3), geoGroup, () => INDIA_DEPTH);
+  // Maharashtra express connectivity backbone corridors
+  const findDistrict = (name: string) => districtNodes.find((d) => d.name.toLowerCase().includes(name.toLowerCase()));
+  const mum = findDistrict("Bombay") || findDistrict("Thane") || { name: "Mumbai", lat: 18.94, lon: 72.84 };
+  const pun = findDistrict("Pune") || { name: "Pune", lat: 18.52, lon: 73.86 };
+  const ngp = findDistrict("Nagpur") || { name: "Nagpur", lat: 21.15, lon: 79.09 };
+  const nsk = findDistrict("Nashik") || { name: "Nashik", lat: 19.99, lon: 73.79 };
+  const aur = findDistrict("Aurangabad") || { name: "Aurangabad", lat: 19.87, lon: 75.34 };
+  const klp = findDistrict("Kolhapur") || { name: "Kolhapur", lat: 16.70, lon: 74.24 };
+  const slp = findDistrict("Solapur") || { name: "Solapur", lat: 17.65, lon: 75.90 };
+  const nnd = findDistrict("Nanded") || { name: "Nanded", lat: 19.14, lon: 77.31 };
+  const amr = findDistrict("Amravati") || { name: "Amravati", lat: 20.93, lon: 77.75 };
 
-  // --- Rivers (static, on the terrain surface) ---
+  if (mum && pun) addConnectivityLine(mum, pun, true);
+  if (pun && aur) addConnectivityLine(pun, aur, true);
+  if (aur && ngp) addConnectivityLine(aur, ngp, true); // Samruddhi connectivity trunk
+  if (mum && nsk) addConnectivityLine(mum, nsk, true);
+  if (nsk && aur) addConnectivityLine(nsk, aur, true);
+  if (pun && klp) addConnectivityLine(pun, klp, true);
+  if (pun && slp) addConnectivityLine(pun, slp, true);
+  if (aur && nnd) addConnectivityLine(aur, nnd, true);
+  if (amr && ngp) addConnectivityLine(amr, ngp, true);
+
+  // --- Rivers ---
   (riversData as { rivers: { name: string; pts: number[][] }[] }).rivers.forEach((river) => {
     const pts = river.pts.map(([lon, lat]) => {
       const p = toXY(lon, lat);
-      return new THREE.Vector3(p.x, elevationWorldAt(lat, lon) + 0.07, p.y);
+      return new THREE.Vector3(p.x, elevationWorldAt(lat, lon) + 0.12, -p.y);
     });
     if (pts.length < 2) return;
     const glowLine = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(pts),
-      edgeMat(0x2696c8, 0.16),
+      edgeMat(0x2696c8, 0.25),
     );
     const mainLine = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(pts),
-      edgeMat(0x4cc3ef, 0.55),
+      edgeMat(0x4cc3ef, 0.65),
     );
     geoGroup.add(glowLine, mainLine);
     if (RIVER_LABEL.has(river.name)) {
@@ -368,7 +512,7 @@ export function createInvestigationMap(
       const mid = pts[midIdx];
       const label = new THREE.Sprite(new THREE.SpriteMaterial({
         map: makeLabelTexture(river.name, "#7fc8ea"),
-        transparent: true, depthWrite: false, opacity: 0.5,
+        transparent: true, depthWrite: false, opacity: 0.6,
       }));
       label.position.set(mid.x + 4, mid.y + 2.4, mid.z - 2);
       label.scale.set(Math.max(5, river.name.length * 1.45), 0.95, 1);
@@ -376,49 +520,118 @@ export function createInvestigationMap(
     }
   });
 
-  // --- Labels: states, sea, region title, cities -----------------------------
-  const labelAt = (text: string, color: string, lat: number, lon: number, yOff: number, widthMul = 1.5, size = 1, opacity = 0.62) => {
+  // --- National Highways / Major Road Corridors ---
+  (transitData as { highways: { name: string; pts: number[][] }[]; railways: { name: string; pts: number[][] }[]; stations: { code: string; name: string; city: string; lat: number; lon: number }[] }).highways.forEach((hwy) => {
+    const pts = hwy.pts.map(([lon, lat]) => {
+      const p = toXY(lon, lat);
+      return new THREE.Vector3(p.x, elevationWorldAt(lat, lon) + 0.16, -p.y);
+    });
+    if (pts.length < 2) return;
+    const hwyLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      edgeMat(0xf59e0b, 0.6), // Amber highway line
+    );
+    const hwyGlow = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      edgeMat(0xfbbf24, 0.25),
+    );
+    geoGroup.add(hwyLine, hwyGlow);
+  });
+
+  // --- Railway Lines ---
+  (transitData as { highways: { name: string; pts: number[][] }[]; railways: { name: string; pts: number[][] }[]; stations: { code: string; name: string; city: string; lat: number; lon: number }[] }).railways.forEach((rail) => {
+    const pts = rail.pts.map(([lon, lat]) => {
+      const p = toXY(lon, lat);
+      return new THREE.Vector3(p.x, elevationWorldAt(lat, lon) + 0.18, -p.y);
+    });
+    if (pts.length < 2) return;
+    const railLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      edgeMat(0x60a5fa, 0.75), // Bright rail corridor
+    );
+    const railGlow = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      edgeMat(0x93c5fd, 0.3),
+    );
+    geoGroup.add(railLine, railGlow);
+  });
+
+  // --- Labels: Indian States, Sea, Cities, Train Stations -----------------------------
+  const labelAt = (text: string, color: string, lat: number, lon: number, yOff: number, widthMul = 2.0, size = 1.4, opacity = 0.85) => {
     const p = project(lat, lon);
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
       map: makeLabelTexture(text.toUpperCase(), color),
       transparent: true, depthWrite: false, opacity,
     }));
-    sprite.position.set(p.x, Math.max(1.2, elevationWorldAt(lat, lon)) + yOff, p.y);
-    sprite.scale.set(Math.max(6, text.length * widthMul * size), (0.95 + 0.32 * size) * size, 1);
+    sprite.position.set(p.x, Math.max(1.5, elevationWorldAt(lat, lon)) + yOff, -p.y);
+    sprite.scale.set(Math.max(10, text.length * widthMul * size), 3.2 * size, 1);
     staticGroup.add(sprite);
   };
-  (contextData as { states: { name: string; polygons: Polygons }[] }).states.forEach((s) => {
-    const outer = s.polygons[0][outerRingIndex(s.polygons[0])];
-    let lat = 0, lon = 0;
-    outer.forEach((c) => { lat += c[1]; lon += c[0]; });
-    const n = outer.length || 1;
-    labelAt(s.name.replace(/^Dadra.*$/, "DADRA & DNH"), "#6f9fd8", lat / n, lon / n, 1.6, 1.5, 1.1, 0.45);
-  });
-  labelAt("Arabian Sea", "#4f86b8", 18.3, 71.55, 0.4, 1.3, 1.4, 0.4);
-  labelAt("Maharashtra · India", "#7fb2ff", 19.6, 74.9, 3.2, 1.35, 1.5, 0.42);
 
+  // State Name Labels (positioned at primary polygon centroid)
+  (indiaStatesData as { states: { name: string; polygons: Polygons }[] }).states.forEach((s) => {
+    let maxRing: number[][] = [];
+    let maxLen = 0;
+    s.polygons.forEach((poly) => {
+      const ring = poly[outerRingIndex(poly)] || poly[0];
+      if (ring && ring.length > maxLen) {
+        maxLen = ring.length;
+        maxRing = ring;
+      }
+    });
+    if (!maxRing.length) return;
+    let latSum = 0, lonSum = 0;
+    maxRing.forEach(([lon, lat]) => {
+      latSum += lat;
+      lonSum += lon;
+    });
+    const avgLat = latSum / maxRing.length;
+    const avgLon = lonSum / maxRing.length;
+    const isMaha = s.name === "Maharashtra";
+    labelAt(
+      s.name,
+      isMaha ? "#e0f8ff" : "#b0d4ff",
+      avgLat,
+      avgLon,
+      isMaha ? 3.8 : 2.4,
+      1.8,
+      isMaha ? 1.6 : 1.2,
+      isMaha ? 0.95 : 0.85
+    );
+  });
+
+  labelAt("Arabian Sea", "#60a5fa", 16.5, 69.5, 0.6, 2.0, 1.8, 0.75);
+  labelAt("Bay of Bengal", "#60a5fa", 15.5, 87.5, 0.6, 2.0, 1.8, 0.75);
+  labelAt("India · National Grid", "#60a5fa", 23.5, 79.5, 5.0, 2.2, 2.2, 0.85);
+
+  // Major Cities
   const cityDotTex = makeSpriteTexture(splitStyle(LOCATION_GLOW));
   (citiesData as { cities: { name: string; lat: number; lon: number; major?: boolean }[] }).cities.forEach((c) => {
     const p = project(c.lat, c.lon);
     const base = elevationWorldAt(c.lat, c.lon);
     const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: cityDotTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     dot.material.color.setHex(c.major ? 0x9fe8ff : 0x5f8fc0);
-    const s = c.major ? 2.6 : 1.4;
-    dot.position.set(p.x, base + 0.5, p.y);
+    const s = c.major ? 4.5 : 2.8;
+    dot.position.set(p.x, base + 0.8, -p.y);
     dot.scale.set(s, s, 1);
     staticGroup.add(dot);
-    labelAt(c.name, c.major ? "#dff8ff" : "#87b7e8", c.lat, c.lon, c.major ? 2.6 : 1.8, 1.45, c.major ? 1 : 0.8, 0.6);
+    labelAt(c.name, c.major ? "#ffffff" : "#c2e0ff", c.lat, c.lon, c.major ? 4.0 : 2.8, 2.0, c.major ? 1.4 : 1.0, 0.9);
   });
 
-  // --- Dynamic marker / route state ----------------------------------------------
-  const hitProbes: HitProbe[] = [];
-  const comets: Comet[] = [];
-  const pulse: PulseItem[] = [];
-  const halos: Halo[] = [];
-  const caseTexCache = new Map<string, THREE.CanvasTexture>();
-  const labelTexCache = new Map<string, THREE.CanvasTexture>();
-  const locTex = makeSpriteTexture(splitStyle(LOCATION_GLOW));
-  const cometTex = makeSpriteTexture(splitStyle("rgba(255,255,255,1)|rgba(140,235,255,0.9)|rgba(40,90,180,0)"));
+  // Major Train Stations / Railway Terminals
+  const stationDotTex = makeSpriteTexture(splitStyle(TRAIN_STATION_GLOW));
+  (transitData as { stations: { code: string; name: string; city: string; lat: number; lon: number }[] }).stations.forEach((st) => {
+    const p = project(st.lat, st.lon);
+    const base = elevationWorldAt(st.lat, st.lon);
+    const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: stationDotTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    dot.material.color.setHex(0xfbbf24);
+    dot.position.set(p.x, base + 1.0, -p.y);
+    dot.scale.set(3.6, 3.6, 1);
+    staticGroup.add(dot);
+    labelAt(`🚉 ${st.code} · ${st.name}`, "#fde68a", st.lat, st.lon, 4.6, 2.0, 1.1, 0.88);
+  });
+
+  // --- Dynamic marker / route helpers ----------------------------------------------
 
   const addSpriteAt = (tex: THREE.Texture, pos3: THREE.Vector3, scale: number, colorHex: number, base: number | null): THREE.Sprite => {
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -496,6 +709,7 @@ export function createInvestigationMap(
     disposeGroup(routeGroup);
     disposeGroup(labelGroup);
     hitProbes.length = 0;
+    hitProbes.push(...districtHitProbes);
     comets.length = 0;
     pulse.length = 0;
     halos.length = 0;
@@ -555,7 +769,7 @@ export function createInvestigationMap(
         const cp = casePos.get(m.caseId);
         if (!cp) return;
         const baseY = elevationWorldAt(cp.y / K_LAT + (MAP_BOUNDS.minLat + MAP_BOUNDS.maxLat) / 2, cp.x / K_LON + (MAP_BOUNDS.minLon + MAP_BOUNDS.maxLon) / 2);
-        const pos3 = new THREE.Vector3(cp.x, baseY + 2.0, cp.y);
+        const pos3 = new THREE.Vector3(cp.x, baseY + 2.0, -cp.y);
         const isSel = m.caseId === selectedCaseId;
         const dimmed = caseDimmed(m);
         const hex = m.priority === "HIGH" ? 0xffd46a : m.priority === "MEDIUM" ? 0x6fdcff : 0x5ad592;
@@ -570,7 +784,7 @@ export function createInvestigationMap(
         if (isSel) addHalo(pos3, 3.8, 0xffffff, 0.42, true);
         addHitProbe("case", m.caseId, pos3, 1.8);
         if (showLabels) {
-          addLabel(m.caseId, isSel ? "#ffe9b0" : "#ffd27a", new THREE.Vector3(cp.x, pos3.y + 2.0, cp.y));
+          addLabel(m.caseId, isSel ? "#ffe9b0" : "#ffd27a", new THREE.Vector3(cp.x, pos3.y + 2.0, -cp.y));
         }
       });
     }
@@ -580,7 +794,7 @@ export function createInvestigationMap(
         m.locations.forEach((l) => {
           const p = project(l.latitude, l.longitude);
           const baseY = elevationWorldAt(l.latitude, l.longitude);
-          const pos3 = new THREE.Vector3(p.x, baseY + 0.9, p.y);
+          const pos3 = new THREE.Vector3(p.x, baseY + 0.9, -p.y);
           const active = locActive(l);
           const dimmed = locDimmed(l) || !locInRange(l);
           const scale = (0.8 + l.importance * 0.9) * (active ? 1.6 : dimmed ? 0.72 : 1.15);
@@ -590,29 +804,29 @@ export function createInvestigationMap(
           addHalo(pos3, scale * 1.4, hex, active ? 0.34 : 0.12);
           addHitProbe("location", l.id, pos3, Math.max(0.6, scale * 0.72));
           if (showLabels) {
-            addLabel(l.name, active ? "#dff8ff" : dimmed ? "#5f86a8" : "#8ec9f2", new THREE.Vector3(p.x, pos3.y + 1.5, p.y), 0.8);
+            addLabel(l.name, active ? "#dff8ff" : dimmed ? "#5f86a8" : "#8ec9f2", new THREE.Vector3(p.x, pos3.y + 1.5, -p.y), 0.8);
           }
         });
       });
     }
 
-    if (showRoutes && hasFocus) {
+    if (showRoutes) {
       markers.forEach((m) => {
         const cp = casePos.get(m.caseId);
         if (!cp || !m.locations.length) return;
-        const focused = selCase?.caseId === m.caseId || selLoc?.caseId === m.caseId || m.locations.some((l) => entityLocIds.has(l.id));
-        if (!focused) return;
+        const focused = !hasFocus || selCase?.caseId === m.caseId || selLoc?.caseId === m.caseId || m.locations.some((l) => entityLocIds.has(l.id));
+        if (hasFocus && !focused) return;
         const baseY = elevationWorldAt(cp.y / K_LAT + (MAP_BOUNDS.minLat + MAP_BOUNDS.maxLat) / 2, cp.x / K_LON + (MAP_BOUNDS.minLon + MAP_BOUNDS.maxLon) / 2);
-        const a = new THREE.Vector3(cp.x, baseY + 2.2, cp.y);
+        const a = new THREE.Vector3(cp.x, baseY + 2.2, -cp.y);
         m.locations.forEach((l, i) => {
           const p = project(l.latitude, l.longitude);
-          const dim = locDimmed(l) || !locInRange(l);
-          const b = new THREE.Vector3(p.x, elevationWorldAt(l.latitude, l.longitude) + 0.95, p.y);
+          const dim = hasFocus && (locDimmed(l) || !locInRange(l));
+          const b = new THREE.Vector3(p.x, elevationWorldAt(l.latitude, l.longitude) + 0.95, -p.y);
           const mid = new THREE.Vector3((a.x + b.x) / 2, Math.max(a.y, b.y) + 4.5, (a.z + b.z) / 2);
           const line = new THREE.Line(
             new THREE.BufferGeometry().setFromPoints(new THREE.QuadraticBezierCurve3(a, mid, b).getPoints(28)),
             new THREE.LineBasicMaterial({
-              color: 0x54dcff, transparent: true, opacity: dim ? 0.06 : 0.35,
+              color: 0x54dcff, transparent: true, opacity: dim ? 0.08 : 0.4,
               blending: THREE.AdditiveBlending, depthWrite: false,
             }),
           );
@@ -648,6 +862,9 @@ export function createInvestigationMap(
     if (hit && hit.userData.kind === "case") {
       host.style.cursor = "pointer";
       callbacks.onHoverCase(hit.userData.id, e.clientX, e.clientY);
+    } else if (hit && hit.userData.kind === "district") {
+      host.style.cursor = "pointer";
+      callbacks.onHoverCase(`DISTRICT:${hit.userData.id}:${hit.userData.lat}:${hit.userData.lon}`, e.clientX, e.clientY);
     } else {
       host.style.cursor = drag.down ? "grabbing" : "grab";
       callbacks.onHoverCase(null, 0, 0);
@@ -667,8 +884,21 @@ export function createInvestigationMap(
     if (wasMoved) return;
     const hit = pickAt();
     if (hit) {
-      if (hit.userData.kind === "case") callbacks.onSelectCase(hit.userData.id);
-      else callbacks.onSelectLocation(hit.userData.id);
+      if (hit.userData.kind === "case") {
+        callbacks.onSelectCase(hit.userData.id);
+      } else if (hit.userData.kind === "district") {
+        // Fly directly to district
+        const lat = Number(hit.userData.lat);
+        const lon = Number(hit.userData.lon);
+        const p = project(lat, lon);
+        const baseY = elevationWorldAtXY(p.x, p.y);
+        const c = new THREE.Vector3(p.x, baseY + 1.5, -p.y);
+        const elev = (50 * Math.PI) / 180;
+        const dir = new THREE.Vector3(0, Math.sin(elev), Math.cos(elev));
+        handle.fly = { pos: c.clone().add(dir.multiplyScalar(32)), target: c.clone() };
+      } else {
+        callbacks.onSelectLocation(hit.userData.id);
+      }
     } else {
       callbacks.onClear();
     }
@@ -755,29 +985,59 @@ export function createInvestigationMap(
 }
 
 // --- Fly-to -----------------------------------------------------------------------
-function fitBounds(handle: SceneHandle, markers: CaseMarker[], caseId?: string) {
-  const locs = caseId
-    ? markers.find((m) => m.caseId === caseId)?.locations ?? []
-    : markers.flatMap((m) => m.locations);
-  if (!locs.length) return;
-  const pts = locs.map((l) => project(l.latitude, l.longitude));
+function fitBounds(handle: SceneHandle, markers: CaseMarker[], caseId?: string, locationId?: string) {
+  let targetLocs: CaseLocation[] = [];
+  if (locationId) {
+    const l = markers.flatMap((m) => m.locations).find((loc) => loc.id === locationId);
+    if (l) targetLocs = [l];
+  } else if (caseId) {
+    targetLocs = markers.find((m) => m.caseId === caseId)?.locations ?? [];
+  } else {
+    targetLocs = markers.flatMap((m) => m.locations);
+  }
+
+  if (!targetLocs.length) return;
+  const pts = targetLocs.map((l) => project(l.latitude, l.longitude));
   const minX = Math.min(...pts.map((p) => p.x));
   const maxX = Math.max(...pts.map((p) => p.x));
-  const minZ = Math.min(...pts.map((p) => p.y));
-  const maxZ = Math.max(...pts.map((p) => p.y));
+  const minZ = Math.min(...pts.map((p) => -p.y));
+  const maxZ = Math.max(...pts.map((p) => -p.y));
   const c = new THREE.Vector3((minX + maxX) / 2, CHASSIS_TOP + 2.5, (minZ + maxZ) / 2);
-  const radius = Math.max(12, Math.hypot(maxX - minX, maxZ - minZ) * 0.62);
-  const dir = handle.camera.position.clone().sub(handle.controls.target).normalize();
-  handle.fly = { pos: c.clone().add(dir.multiplyScalar(radius * 2.0)), target: c.clone() };
+  const span = Math.hypot(maxX - minX, maxZ - minZ);
+  const radius = Math.max(14, span * 0.65);
+
+  let dir = handle.camera.position.clone().sub(handle.controls.target);
+  if (dir.lengthSq() < 1e-4) {
+    const elev = (55 * Math.PI) / 180;
+    dir = new THREE.Vector3(0, Math.sin(elev), Math.cos(elev));
+  } else {
+    dir.normalize();
+  }
+  const dist = locationId ? 38 : Math.max(28, radius * 2.2);
+  handle.fly = { pos: c.clone().add(dir.multiplyScalar(dist)), target: c.clone() };
+}
+
+function flyToPoint(handle: SceneHandle, lat: number, lon: number, zoomDist = 34) {
+  const p = project(lat, lon);
+  const elevY = elevationWorldAtXY(p.x, p.y);
+  const c = new THREE.Vector3(p.x, Math.max(1.6, elevY + 1.2), -p.y);
+  let dir = handle.camera.position.clone().sub(handle.controls.target);
+  if (dir.lengthSq() < 1e-4) {
+    const elev = (55 * Math.PI) / 180;
+    dir = new THREE.Vector3(0, Math.sin(elev), Math.cos(elev));
+  } else {
+    dir.normalize();
+  }
+  handle.fly = { pos: c.clone().add(dir.multiplyScalar(zoomDist)), target: c.clone() };
 }
 
 function resetCamera(handle: SceneHandle) {
-  const DIST = 132;
-  const elev = (46 * Math.PI) / 180;
-  const az = -2.55;
-  const t = new THREE.Vector3(-121, 4, 9);
+  const DIST = 340;
+  const elev = (55 * Math.PI) / 180;
+  const az = 0;
+  const t = new THREE.Vector3(0, 4, 0);
   handle.fly = {
-    pos: new THREE.Vector3(t.x + Math.sin(az) * Math.cos(elev) * DIST, t.y + Math.sin(elev) * DIST, t.z + Math.cos(az) * Math.cos(elev) * DIST),
+    pos: new THREE.Vector3(t.x + Math.sin(az) * Math.cos(elev) * DIST, t.y + Math.sin(elev) * DIST, t.z + Math.cos(elev) * DIST),
     target: t,
   };
 }
@@ -816,6 +1076,7 @@ export function InvestigationMap() {
       const loc = store.locationById(id);
       store.selectLocation(id);
       store.selectEntity(loc?.entityIds[0] ?? null);
+      store.requestCamera("fit-location", id);
     },
     onClear: () => useMapStore.getState().clearSelection(),
     onHoverCase: (caseId: string | null, x: number, y: number) => setHover(caseId ? { id: caseId, x, y } : null),
@@ -844,19 +1105,38 @@ export function InvestigationMap() {
         const h = handleRef.current;
         if (!h) return;
         if (req.kind === "fit-case") fitBounds(h, state.markers, req.caseId);
+        else if (req.kind === "fit-location") fitBounds(h, state.markers, undefined, req.locationId);
+        else if (req.kind === "fit-point") flyToPoint(h, req.lat, req.lon, req.zoomDist);
         else if (req.kind === "fit-all") fitBounds(h, state.markers);
         else resetCamera(h);
       }
     });
   }, []);
 
-  const hoveredMarker = hover ? markers.find((m) => m.caseId === hover.id) : null;
+  const isDistrictHover = hover?.id.startsWith("DISTRICT:");
+  const districtInfo = isDistrictHover ? (() => {
+    const [, name, lat, lon] = hover!.id.split(":");
+    return { name, lat: Number(lat).toFixed(3), lon: Number(lon).toFixed(3) };
+  })() : null;
+  const hoveredMarker = hover && !isDistrictHover ? markers.find((m) => m.caseId === hover.id) : null;
 
   return (
     <div className="globe-shell">
       <div ref={hostRef} className="globe-canvas-host" />
       <div className="globe-scanlines" />
       <div className="globe-vignette" />
+      {districtInfo && (
+        <div
+          className="map-tooltip"
+          style={{ left: Math.min(hover!.x + 16, window.innerWidth - 270), top: Math.max(8, hover!.y - 120) }}
+        >
+          <div className="map-tooltip-title">📍 {districtInfo.name} District</div>
+          <div className="map-tooltip-row"><span>STATE</span><strong style={{ color: "#38bdf8" }}>Maharashtra</strong></div>
+          <div className="map-tooltip-row"><span>GRID SECTOR</span><strong>Deccan Telemetry Mesh</strong></div>
+          <div className="map-tooltip-row"><span>COORDINATES</span><strong style={{ fontFamily: "monospace" }}>{districtInfo.lat}° N, {districtInfo.lon}° E</strong></div>
+          <div className="map-tooltip-row"><span>STATUS</span><strong style={{ color: "#4ade80" }}>● CONNECTED / ACTIVE</strong></div>
+        </div>
+      )}
       {hoveredMarker && (
         <div
           className="map-tooltip"

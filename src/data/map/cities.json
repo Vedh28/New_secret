@@ -1,1 +1,167 @@
-{"type":"cities","cities":[{"name":"Mumbai","lat":19.076,"lon":72.8777,"major":true},{"name":"Pune","lat":18.5204,"lon":73.8567,"major":true},{"name":"Nagpur","lat":21.1458,"lon":79.0882,"major":true},{"name":"Nashik","lat":19.9975,"lon":73.7898,"major":true},{"name":"Aurangabad","lat":19.8762,"lon":75.3433,"major":true},{"name":"Thane","lat":19.2183,"lon":72.9781},{"name":"Navi Mumbai","lat":19.033,"lon":73.0297},{"name":"Kolhapur","lat":16.705,"lon":74.2433},{"name":"Solapur","lat":17.6599,"lon":75.9064},{"name":"Amravati","lat":20.9374,"lon":77.7796},{"name":"Ratnagiri","lat":16.9897,"lon":73.2681},{"name":"Sangli","lat":16.8567,"lon":74.5698},{"name":"Chandrapur","lat":19.9615,"lon":79.2961},{"name":"Jalgaon","lat":21.0077,"lon":75.5626},{"name":"Dhule","lat":20.9042,"lon":74.7749},{"name":"Latur","lat":18.4088,"lon":76.5604}]}
+{
+  "type": "cities",
+  "cities": [
+    {
+      "name": "New Delhi",
+      "lat": 28.6139,
+      "lon": 77.209,
+      "major": true
+    },
+    {
+      "name": "Mumbai",
+      "lat": 19.076,
+      "lon": 72.8777,
+      "major": true
+    },
+    {
+      "name": "Bengaluru",
+      "lat": 12.9716,
+      "lon": 77.5946,
+      "major": true
+    },
+    {
+      "name": "Kolkata",
+      "lat": 22.5726,
+      "lon": 88.3639,
+      "major": true
+    },
+    {
+      "name": "Chennai",
+      "lat": 13.0827,
+      "lon": 80.2707,
+      "major": true
+    },
+    {
+      "name": "Hyderabad",
+      "lat": 17.385,
+      "lon": 78.4867,
+      "major": true
+    },
+    {
+      "name": "Ahmedabad",
+      "lat": 23.0225,
+      "lon": 72.5714,
+      "major": true
+    },
+    {
+      "name": "Pune",
+      "lat": 18.5204,
+      "lon": 73.8567,
+      "major": true
+    },
+    {
+      "name": "Jaipur",
+      "lat": 26.9124,
+      "lon": 75.7873,
+      "major": true
+    },
+    {
+      "name": "Lucknow",
+      "lat": 26.8467,
+      "lon": 80.9462,
+      "major": true
+    },
+    {
+      "name": "Patna",
+      "lat": 25.5941,
+      "lon": 85.1376,
+      "major": true
+    },
+    {
+      "name": "Bhopal",
+      "lat": 23.2599,
+      "lon": 77.4126,
+      "major": true
+    },
+    {
+      "name": "Chandigarh",
+      "lat": 30.7333,
+      "lon": 76.7794,
+      "major": true
+    },
+    {
+      "name": "Guwahati",
+      "lat": 26.1445,
+      "lon": 91.7362,
+      "major": true
+    },
+    {
+      "name": "Bhubaneswar",
+      "lat": 20.2961,
+      "lon": 85.8245,
+      "major": true
+    },
+    {
+      "name": "Srinagar",
+      "lat": 34.0837,
+      "lon": 74.7973,
+      "major": true
+    },
+    {
+      "name": "Nagpur",
+      "lat": 21.1458,
+      "lon": 79.0882,
+      "major": true
+    },
+    {
+      "name": "Kochi",
+      "lat": 9.9312,
+      "lon": 76.2673,
+      "major": true
+    },
+    {
+      "name": "Varanasi",
+      "lat": 25.3176,
+      "lon": 82.9739,
+      "major": true
+    },
+    {
+      "name": "Surat",
+      "lat": 21.1702,
+      "lon": 72.8311,
+      "major": true
+    },
+    {
+      "name": "Amritsar",
+      "lat": 31.634,
+      "lon": 74.8723,
+      "major": false
+    },
+    {
+      "name": "Ranchi",
+      "lat": 23.3441,
+      "lon": 85.3096,
+      "major": false
+    },
+    {
+      "name": "Raipur",
+      "lat": 21.2514,
+      "lon": 81.6296,
+      "major": false
+    },
+    {
+      "name": "Dehradun",
+      "lat": 30.3165,
+      "lon": 78.0322,
+      "major": false
+    },
+    {
+      "name": "Shimla",
+      "lat": 31.1048,
+      "lon": 77.1734,
+      "major": false
+    },
+    {
+      "name": "Visakhapatnam",
+      "lat": 17.6868,
+      "lon": 83.2185,
+      "major": false
+    },
+    {
+      "name": "Indore",
+      "lat": 22.7196,
+      "lon": 75.8577,
+      "major": false
+    }
+  ]
+}

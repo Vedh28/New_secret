@@ -1,0 +1,89 @@
+{
+  "stations": [
+    { "code": "NDLS", "name": "New Delhi Central", "city": "New Delhi", "lat": 28.6429, "lon": 77.2195, "type": "railway_hub" },
+    { "code": "CSMT", "name": "Mumbai CSMT Terminal", "city": "Mumbai", "lat": 18.9401, "lon": 72.8354, "type": "railway_hub" },
+    { "code": "HWH", "name": "Howrah Junction", "city": "Kolkata", "lat": 22.5839, "lon": 88.3426, "type": "railway_hub" },
+    { "code": "MAS", "name": "Chennai Central", "city": "Chennai", "lat": 13.0827, "lon": 80.2755, "type": "railway_hub" },
+    { "code": "SBC", "name": "Bengaluru KSR Station", "city": "Bengaluru", "lat": 12.9781, "lon": 77.5695, "type": "railway_hub" },
+    { "code": "HYB", "name": "Secunderabad / Hyderabad", "city": "Hyderabad", "lat": 17.4344, "lon": 78.5015, "type": "railway_hub" },
+    { "code": "ADI", "name": "Ahmedabad Junction", "city": "Ahmedabad", "lat": 23.0274, "lon": 72.6012, "type": "railway_hub" },
+    { "code": "PNBE", "name": "Patna Junction", "city": "Patna", "lat": 25.6022, "lon": 85.1374, "type": "railway_hub" },
+    { "code": "PUNE", "name": "Pune Junction", "city": "Pune", "lat": 18.5284, "lon": 73.8739, "type": "railway_hub" },
+    { "code": "JP", "name": "Jaipur Junction", "city": "Jaipur", "lat": 26.9196, "lon": 75.7878, "type": "railway_hub" },
+    { "code": "CNB", "name": "Kanpur Central", "city": "Kanpur", "lat": 26.4547, "lon": 80.3507, "type": "railway_hub" },
+    { "code": "BSB", "name": "Varanasi Junction", "city": "Varanasi", "lat": 25.3283, "lon": 82.9863, "type": "railway_hub" },
+    { "code": "BPL", "name": "Bhopal Junction", "city": "Bhopal", "lat": 23.2684, "lon": 77.4124, "type": "railway_hub" },
+    { "code": "NGP", "name": "Nagpur Junction", "city": "Nagpur", "lat": 21.1528, "lon": 79.0888, "type": "railway_hub" },
+    { "code": "LKO", "name": "Lucknow Charbagh", "city": "Lucknow", "lat": 26.8322, "lon": 80.9234, "type": "railway_hub" },
+    { "code": "GHY", "name": "Guwahati Station", "city": "Guwahati", "lat": 26.1837, "lon": 91.7516, "type": "railway_hub" },
+    { "code": "BBS", "name": "Bhubaneswar Station", "city": "Bhubaneswar", "lat": 20.2666, "lon": 85.8436, "type": "railway_hub" },
+    { "code": "CDG", "name": "Chandigarh Junction", "city": "Chandigarh", "lat": 30.7058, "lon": 76.8203, "type": "railway_hub" },
+    { "code": "ASR", "name": "Amritsar Junction", "city": "Amritsar", "lat": 31.6340, "lon": 74.8723, "type": "railway_hub" },
+    { "code": "JAT", "name": "Jammu Tawi", "city": "Jammu", "lat": 32.7063, "lon": 74.8797, "type": "railway_hub" },
+    { "code": "TVC", "name": "Thiruvananthapuram Central", "city": "Thiruvananthapuram", "lat": 8.4875, "lon": 76.9525, "type": "railway_hub" },
+    { "code": "COK", "name": "Ernakulam Junction", "city": "Kochi", "lat": 9.9678, "lon": 76.2885, "type": "railway_hub" },
+    { "code": "GKP", "name": "Gorakhpur Junction", "city": "Gorakhpur", "lat": 26.7588, "lon": 83.3813, "type": "railway_hub" },
+    { "code": "R", "name": "Raipur Junction", "city": "Raipur", "lat": 21.2583, "lon": 81.6296, "type": "railway_hub" },
+    { "code": "RNC", "name": "Ranchi Junction", "city": "Ranchi", "lat": 23.3512, "lon": 85.3341, "type": "railway_hub" }
+  ],
+  "railways": [
+    {
+      "name": "Delhi-Mumbai Main Line",
+      "pts": [[77.2195, 28.6429], [77.6737, 27.4924], [78.0081, 27.1767], [78.1828, 26.2183], [78.5685, 25.4484], [77.4124, 23.2684], [75.8648, 22.7196], [74.6033, 20.9042], [73.8739, 18.5284], [72.8354, 18.9401]]
+    },
+    {
+      "name": "Delhi-Howrah Main Line",
+      "pts": [[77.2195, 28.6429], [77.4126, 28.6692], [78.0772, 27.8974], [80.3507, 26.4547], [81.8463, 25.4358], [82.9863, 25.3283], [85.1374, 25.6022], [86.9842, 25.2425], [87.8443, 25.0108], [88.3426, 22.5839]]
+    },
+    {
+      "name": "Mumbai-Chennai Line",
+      "pts": [[72.8354, 18.9401], [73.8739, 18.5284], [75.9064, 17.6599], [77.3489, 15.1394], [78.5015, 17.4344], [79.6547, 14.4426], [80.2755, 13.0827]]
+    },
+    {
+      "name": "Howrah-Chennai Coastal Trunk",
+      "pts": [[88.3426, 22.5839], [86.9263, 21.4934], [85.8436, 20.2666], [83.3013, 17.7231], [80.6480, 16.5062], [80.0499, 14.4426], [80.2755, 13.0827]]
+    },
+    {
+      "name": "North-South Grand Trunk (Delhi-Chennai)",
+      "pts": [[77.2195, 28.6429], [78.0081, 27.1767], [78.1828, 26.2183], [77.4124, 23.2684], [79.0888, 21.1528], [78.5015, 17.4344], [80.6480, 16.5062], [80.2755, 13.0827]]
+    },
+    {
+      "name": "Bengaluru-Chennai-Kochi Corridor",
+      "pts": [[77.5695, 12.9781], [79.1378, 12.9165], [80.2755, 13.0827], [78.1198, 9.9252], [76.9525, 8.4875], [76.2885, 9.9678]]
+    },
+    {
+      "name": "Western Coastal Railway (Konkan Rail)",
+      "pts": [[72.8354, 18.9401], [73.0169, 18.2323], [73.3106, 16.9902], [73.8180, 15.4909], [74.8560, 12.9141], [76.2885, 9.9678]]
+    },
+    {
+      "name": "Northeast Trunk Line",
+      "pts": [[88.3426, 22.5839], [88.4236, 26.7271], [91.7516, 26.1837], [94.9120, 27.4728]]
+    },
+    {
+      "name": "Northern Punjab-Jammu Rail",
+      "pts": [[77.2195, 28.6429], [76.8203, 30.7058], [74.8723, 31.6340], [74.8797, 32.7063]]
+    }
+  ],
+  "highways": [
+    {
+      "name": "NH 44 (North-South Corridor: Srinagar-Kanyakumari)",
+      "pts": [[74.7973, 34.0837], [74.8797, 32.7063], [75.8573, 30.9010], [77.2090, 28.6139], [78.0081, 27.1767], [78.1828, 26.2183], [79.0888, 21.1528], [78.4867, 17.3850], [77.5946, 12.9716], [78.1198, 9.9252], [77.5385, 8.0883]]
+    },
+    {
+      "name": "NH 48 (Golden Quadrilateral: Delhi-Mumbai-Bengaluru-Chennai)",
+      "pts": [[77.2090, 28.6139], [75.7873, 26.9124], [73.7125, 24.5854], [72.5714, 23.0225], [72.8311, 21.1702], [72.8777, 19.0760], [73.8567, 18.5204], [74.2433, 16.7050], [77.5946, 12.9716], [80.2707, 13.0827]]
+    },
+    {
+      "name": "NH 19 (Golden Quadrilateral: Delhi-Kolkata)",
+      "pts": [[77.2090, 28.6139], [78.0081, 27.1767], [80.3507, 26.4547], [81.8463, 25.4358], [82.9863, 25.3283], [85.3341, 23.3512], [88.3639, 22.5726]]
+    },
+    {
+      "name": "NH 16 (Golden Quadrilateral: Kolkata-Chennai)",
+      "pts": [[88.3639, 22.5726], [85.8245, 20.2961], [83.3013, 17.7231], [80.6480, 16.5062], [80.2707, 13.0827]]
+    },
+    {
+      "name": "NH 27 (East-West Corridor: Porbandar-Silchar)",
+      "pts": [[69.6293, 21.6417], [70.8022, 22.3039], [73.7125, 24.5854], [75.8648, 25.1800], [77.7274, 25.4358], [80.9462, 26.8467], [83.3813, 26.7588], [85.1376, 25.5941], [88.4236, 26.7271], [91.7362, 26.1445], [92.7926, 24.8333]]
+    }
+  ]
+}

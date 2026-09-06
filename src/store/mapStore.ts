@@ -16,6 +16,8 @@ export type MapSource = "backend" | "mock";
 
 export type CameraRequest =
   | { kind: "fit-case"; caseId: string; nonce: number }
+  | { kind: "fit-location"; locationId: string; nonce: number }
+  | { kind: "fit-point"; lat: number; lon: number; zoomDist?: number; nonce: number }
   | { kind: "fit-all"; nonce: number }
   | { kind: "reset"; nonce: number };
 
@@ -49,7 +51,8 @@ interface MapState extends MapFlags {
   selectEntity: (entityId: string | null) => void;
   setTimeRange: (range: TimeRange) => void;
   toggleFlag: (key: keyof MapFlags) => void;
-  requestCamera: (kind: CameraRequest["kind"], caseId?: string) => void;
+  requestCamera: (kind: CameraRequest["kind"], id?: string) => void;
+  flyToGeo: (lat: number, lon: number, zoomDist?: number) => void;
   clearSelection: () => void;
 
   locationById: (id: string) => CaseLocation | null;
@@ -163,12 +166,24 @@ export const useMapStore = create<MapState>((set, get) => ({
 
   toggleFlag: (key) => set((s) => ({ [key]: !s[key] }) as Partial<MapState>),
 
-  requestCamera: (kind, caseId) => {
+  requestCamera: (kind, id) => {
     const nonce = (get().cameraRequest?.nonce ?? 0) + 1;
-    const req: CameraRequest = kind === "fit-case"
-      ? { kind: "fit-case", caseId: caseId ?? "", nonce }
-      : { kind, nonce };
+    let req: CameraRequest;
+    if (kind === "fit-case") {
+      req = { kind: "fit-case", caseId: id ?? "", nonce };
+    } else if (kind === "fit-location") {
+      req = { kind: "fit-location", locationId: id ?? "", nonce };
+    } else if (kind === "fit-all") {
+      req = { kind: "fit-all", nonce };
+    } else {
+      req = { kind: "reset", nonce };
+    }
     set({ cameraRequest: req });
+  },
+
+  flyToGeo: (lat, lon, zoomDist = 32) => {
+    const nonce = (get().cameraRequest?.nonce ?? 0) + 1;
+    set({ cameraRequest: { kind: "fit-point", lat, lon, zoomDist, nonce } });
   },
 
   clearSelection: () => set({ selectedCaseId: null, selectedLocationId: null }),

@@ -55,7 +55,6 @@ export function buildExtruded(
     const shape = shapeForPolygon(poly, toXY);
     const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, steps: 1 });
     geo.rotateX(-Math.PI / 2);
-    geo.scale(1, 1, -1);
     geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, material);
     mesh.position.y = baseY;
@@ -66,7 +65,7 @@ export function buildExtruded(
     const outerIdx = areas.reduce((m, a, i, arr) => (Math.abs(a) > Math.abs(arr[m]) ? i : m), 0);
     const rim = poly[outerIdx].map(([lon, lat]) => {
       const p = toXY(lon, lat);
-      return { x: p.x, z: p.y, topY: baseY + depth };
+      return { x: p.x, z: -p.y, topY: baseY + depth };
     });
     edges.push(rim);
   }
