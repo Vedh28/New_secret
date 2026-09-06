@@ -194,6 +194,21 @@ linear-gradient(180deg, rgba(7,10,20,.42), rgba(4,6,14,.94));
 border:1px solid rgba(255,255,255,.08)}
 .globe-shell{position:absolute;inset:0}
 .globe-canvas-host,.globe-shell canvas{position:absolute !important;inset:0 !important}
+.maplibre-map-host{position:absolute !important;inset:0 !important;z-index:0;overflow:hidden;background:#061225}
+.maplibre-map-host .maplibregl-map,.maplibre-map-host .maplibregl-canvas-container,.maplibre-map-host canvas{width:100%;height:100%}
+.maplibre-map-host .maplibregl-ctrl-group{border:1px solid rgba(99,215,255,.28);background:rgba(6,15,34,.82);box-shadow:0 8px 24px rgba(0,0,0,.35);backdrop-filter:blur(10px)}
+.maplibre-map-host .maplibregl-ctrl-group button{width:30px;height:30px;background:transparent;color:#bfeeff;border-color:rgba(99,215,255,.14)}
+.maplibre-map-host .maplibregl-ctrl-group button:hover{background:rgba(56,140,248,.2);color:#fff}
+.maplibre-map-host .maplibre-pitch-control button{font:700 9px/1 "Fira Code",monospace;letter-spacing:.08em}
+.maplibre-map-host .maplibre-orbit-control button{width:42px;font:700 8px/1 "Fira Code",monospace;letter-spacing:.06em;color:#bfeeff}
+.maplibre-map-host .maplibre-orbit-control button.is-active{background:rgba(34,211,238,.22);color:#67e8f9;box-shadow:inset 0 0 12px rgba(34,211,238,.2)}
+.maplibre-map-host .maplibregl-ctrl-bottom-right{right:18px;bottom:46px}
+.maplibre-map-host .maplibregl-ctrl-bottom-left{left:12px;bottom:12px}
+.maplibre-map-host .maplibregl-ctrl-scale{border-color:rgba(191,238,255,.65);color:#c9f2ff;background:rgba(6,15,34,.58);font:600 9px/1 "Fira Code",monospace}
+.maplibre-map-host .maplibregl-ctrl-attrib{background:rgba(4,10,24,.7);color:rgba(190,210,240,.65);font-size:8px}
+.maplibre-map-host .maplibregl-ctrl-attrib a{color:#8fdfff}
+.maplibre-map-host .maplibregl-canvas{cursor:grab}
+.maplibre-map-host .maplibregl-canvas:active{cursor:grabbing}
 .globe-scanlines{position:absolute;inset:0;background:repeating-linear-gradient(180deg, rgba(255,255,255,.02) 0 1px, transparent 1px 4px);opacity:.14;mix-blend-mode:screen;pointer-events:none}
 .globe-vignette{position:absolute;inset:0;background:radial-gradient(circle at center, transparent 44%, rgba(4,6,13,.48) 78%, rgba(2,3,8,.92) 100%);pointer-events:none}
 .globe-overlay{position:absolute;left:18px;right:18px;display:flex;justify-content:space-between;gap:12px;z-index:2;pointer-events:none}
