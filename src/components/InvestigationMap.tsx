@@ -368,6 +368,13 @@ function cinematicCameraOptions(map: MapLibreMap, target: [number, number], bear
   );
 }
 
+function cinematicPitchForZoom(zoom: number): number {
+  if (zoom <= 6) return 56;
+  if (zoom <= 11) return 56 + ((zoom - 6) / 5) * 8;
+  if (zoom <= 16) return 64 + ((zoom - 11) / 5) * 10;
+  return Math.min(78, 74 + (zoom - 16) * 1.1);
+}
+
 type ThreeIntelOverlay = maplibregl.CustomLayerInterface & {
   setTarget: (target: [number, number] | null) => void;
 };
@@ -492,6 +499,12 @@ export function InvestigationMap() {
     map.scrollZoom.setZoomRate(1 / 70);
     map.touchZoomRotate.setZoomRate(0.75);
     map.touchZoomRotate.enableRotation();
+    const syncCinematicZoom = () => {
+      if (orbitEnabledRef.current) return;
+      const nextPitch = cinematicPitchForZoom(map.getZoom());
+      if (Math.abs(map.getPitch() - nextPitch) > 0.2) map.setPitch(nextPitch);
+    };
+    map.on("zoom", syncCinematicZoom);
     map.addControl(new maplibregl.NavigationControl({ showZoom: true, showCompass: true, visualizePitch: true }), "bottom-right");
     map.addControl(new PitchControl(), "bottom-right");
     let orbitControl: OrbitControl;
@@ -548,6 +561,7 @@ export function InvestigationMap() {
       recolorMapStyle(map);
       if (!map.getLayer(threeOverlay.id)) map.addLayer(threeOverlay);
       setReady(true);
+      syncCinematicZoom();
     };
     const onLocationClick = (event: MapMouseEvent) => {
       const feature = event.features?.[0] as MapGeoJSONFeature | undefined;
