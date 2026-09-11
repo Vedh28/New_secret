@@ -27,12 +27,14 @@ export function SimulationPage() {
           </select>
         </HudCard>
       )}
-      <div className="hud-simulation-layout" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
-        <div style={{ display: "grid", gap: 16 }}>
+      <div className="hud-simulation-layout">
+        <div className="hud-simulation-stack">
           <WhatIfSimulator caseKey={caseKey} entityOptions={entityOptions} />
-          <RecommendationList recs={intel?.recommendations ?? []} />
         </div>
-        <InvestigativeLeadsPanel caseKey={caseKey} recommendations={intel?.recommendations ?? []} />
+        <div className="hud-simulation-stack">
+          <RecommendationList recs={intel?.recommendations ?? []} />
+          <InvestigativeLeadsPanel caseKey={caseKey} recommendations={intel?.recommendations ?? []} />
+        </div>
       </div>
     </HudPage>
   );

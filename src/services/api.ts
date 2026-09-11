@@ -803,6 +803,18 @@ export async function apiListAudit(limit = 50): Promise<AuditEntry[]> {
   return request<AuditEntry[]>(`/api/v1/audit?limit=${limit}`);
 }
 
+export async function apiRecordAudit(payload: {
+  action: string;
+  object_type?: string;
+  object_id?: string;
+  result?: Record<string, unknown>;
+}): Promise<AuditEntry> {
+  return request<AuditEntry>("/api/v1/audit", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 // --- Simulation / Demo mode (Phase 15) --------------------------------------
 
 export interface SimulationStep {

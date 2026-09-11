@@ -32,26 +32,26 @@ const BUILDING_BASE = [
 ];
 
 const MAP_COLORS = {
-  background: "#050b14",
-  land: "#0b1626",
-  landDetail: "#10243a",
-  water: "#0b2c4a",
-  waterway: "#2563eb",
-  roadMajor: "#3b82f6",
-  roadMinor: "#1d4b78",
-  roadService: "#143559",
-  roadCasing: "#07101f",
-  boundary: "#2563eb",
-  boundaryAccent: "#22d3ee",
-  building: "#102a43",
-  buildingBright: "#1e4f78",
-  text: "#e5f3ff",
-  textAccent: "#67e8f9",
-  textHalo: "#050b14",
+  background: "#050816",
+  land: "#0a1024",
+  landDetail: "#111a38",
+  water: "#0e2f5c",
+  waterway: "#3f73ff",
+  roadMajor: "#1e5aa7",
+  roadMinor: "#143b65",
+  roadService: "#0d2945",
+  roadCasing: "#050b14",
+  boundary: "#3f73ff",
+  boundaryAccent: "#62d3ff",
+  building: "#131d3d",
+  buildingBright: "#20406e",
+  text: "#f4f6ff",
+  textAccent: "#62d3ff",
+  textHalo: "#050816",
 };
 const BUILDING_COLOR = [
   "interpolate", ["linear"], BUILDING_HEIGHT,
-  0, "#102a43", 30, "#12304a", 90, "#164e70", 220, "#1d6fa5", 420, "#2a6f98",
+  0, "#131d3d", 30, "#183052", 90, "#1d4566", 220, "#2a6f98", 420, "#62a8d4",
 ];
 const BUILDING_OPACITY = [
   "interpolate", ["linear"], ["zoom"],
@@ -63,13 +63,13 @@ type MapHover = { id: string; x: number; y: number } | null;
 function priorityColor(priority: string): string {
   if (priority === "HIGH") return "#ffbd55";
   if (priority === "MEDIUM") return "#62d3ff";
-  return "#63d7a0";
+  return "#5a8fa8";
 }
 
 function routeColor(priority: string): string {
   if (priority === "HIGH") return "#76501f";
   if (priority === "MEDIUM") return "#1b5875";
-  return "#1d5b4d";
+  return "#1d4658";
 }
 
 function centerOf(marker: CaseMarker): [number, number] | null {
@@ -78,6 +78,13 @@ function centerOf(marker: CaseMarker): [number, number] | null {
     marker.locations.reduce((sum, location) => sum + location.longitude, 0) / marker.locations.length,
     marker.locations.reduce((sum, location) => sum + location.latitude, 0) / marker.locations.length,
   ];
+}
+
+function primaryLocation(marker: CaseMarker): CaseMarker["locations"][number] | null {
+  return marker.locations.reduce<CaseMarker["locations"][number] | null>(
+    (best, location) => (!best || location.importance > best.importance ? location : best),
+    null,
+  );
 }
 
 function featureCollection(features: GeoJSON.Feature[]): GeoJSON.FeatureCollection {
@@ -224,6 +231,19 @@ function addMapLayers(map: MapLibreMap) {
       paint: { "circle-radius": ["case", ["get", "selected"], 10, 7], "circle-color": ["get", "color"], "circle-stroke-color": "#e7fbff", "circle-stroke-width": 2, "circle-opacity": 0.98, "circle-blur": 0.08 },
     });
   }
+  if (!map.getLayer("secret-case-halos")) {
+    map.addLayer({
+      id: "secret-case-halos", type: "circle", source: "secret-data", filter: ["==", ["get", "kind"], "case"],
+      paint: { "circle-radius": ["case", ["get", "selected"], 19, 13], "circle-color": ["get", "color"], "circle-opacity": ["case", ["get", "selected"], 0.26, 0.14], "circle-blur": 0.86 },
+    }, "secret-cases");
+  }
+  if (!map.getLayer("secret-case-labels")) {
+    map.addLayer({
+      id: "secret-case-labels", type: "symbol", source: "secret-data", filter: ["==", ["get", "kind"], "case"],
+      layout: { "text-field": ["get", "id"], "text-size": 9, "text-offset": [0, 1.7], "text-anchor": "top", "text-allow-overlap": true },
+      paint: { "text-color": "#dff8ff", "text-halo-color": "#050b14", "text-halo-width": 1.5, "text-opacity": 0.92 },
+    });
+  }
   if (!map.getLayer("secret-locations")) {
     map.addLayer({
       id: "secret-locations", type: "circle", source: "secret-data", filter: ["==", ["get", "kind"], "location"],
@@ -264,19 +284,38 @@ function recolorMapStyle(map: MapLibreMap) {
       const isWetland = id === "landcover_wetland";
       const isOpenLand = id === "landcover_sand" || id === "landuse_pitch" || id === "landuse_track";
       const isCivicLand = id === "landuse_cemetery" || id === "landuse_hospital" || id === "landuse_school";
-      const color = sourceLayer === "park" ? "#0d2630" : isGrass ? "#0d2930" : isWood ? "#0b252f" : isWetland ? "#0b2837" : isOpenLand ? "#10283a" : isCivicLand ? "#102a43" : MAP_COLORS.landDetail;
+      const color = sourceLayer === "park" ? "#0d2038" : isGrass ? "#0b2239" : isWood ? "#0b2036" : isWetland ? "#091a2e" : isOpenLand ? "#10233b" : isCivicLand ? "#122844" : MAP_COLORS.landDetail;
       setPaint(map, layer.id, "fill-color", color);
-      setPaint(map, layer.id, "fill-opacity", sourceLayer === "park" ? 0.62 : isGrass || isWood || isWetland ? 0.48 : 0.72);
+      setPaint(map, layer.id, "fill-opacity", sourceLayer === "park" ? 0.5 : isWetland ? 0.2 : isGrass || isWood ? 0.34 : 0.62);
+      setPaint(map, layer.id, "fill-outline-color", isWetland ? "#15324e" : "#142d49");
       setPaint(map, layer.id, "fill-pattern", null);
+    }
+    if (layer.type === "line" && sourceLayer === "park") {
+      setPaint(map, layer.id, "line-color", "#153653");
+      setPaint(map, layer.id, "line-opacity", 0.3);
+    }
+    if (layer.type === "line" && sourceLayer === "landcover") {
+      setPaint(map, layer.id, "line-color", "#153653");
+      setPaint(map, layer.id, "line-opacity", 0.3);
     }
     if (layer.type === "fill" && sourceLayer === "water") {
       setPaint(map, layer.id, "fill-color", MAP_COLORS.water);
       setPaint(map, layer.id, "fill-opacity", 0.94);
     }
 
+    if (layer.type === "fill" && sourceLayer === "aeroway") {
+      setPaint(map, layer.id, "fill-color", "#10243a");
+      setPaint(map, layer.id, "fill-opacity", 0.48);
+    }
+
+    if (layer.type === "line" && sourceLayer === "aeroway") {
+      setPaint(map, layer.id, "line-color", "#1a466d");
+      setPaint(map, layer.id, "line-opacity", 0.52);
+    }
+
     if (layer.type === "line" && sourceLayer === "waterway") {
-      setPaint(map, layer.id, "line-color", MAP_COLORS.waterway);
-      setPaint(map, layer.id, "line-opacity", 0.86);
+      setPaint(map, layer.id, "line-color", "#24558a");
+      setPaint(map, layer.id, "line-opacity", 0.72);
     }
     if (layer.type === "line" && sourceLayer === "boundary") {
       setPaint(map, layer.id, "line-color", id.includes("disputed") ? MAP_COLORS.boundaryAccent : MAP_COLORS.boundary);
@@ -310,6 +349,7 @@ function recolorMapStyle(map: MapLibreMap) {
     }
 
     if (layer.type === "symbol") {
+      if (layer.layout?.["icon-image"]) setPaint(map, layer.id, "icon-opacity", 0);
       setPaint(map, layer.id, "text-color", sourceLayer === "poi" ? MAP_COLORS.textAccent : MAP_COLORS.text);
       setPaint(map, layer.id, "text-halo-color", MAP_COLORS.textHalo);
       setPaint(map, layer.id, "text-halo-width", 1.25);
@@ -486,6 +526,7 @@ export function InvestigationMap() {
   const showLabels = useMapStore((state) => state.showLabels);
   const selectedCaseId = useMapStore((state) => state.selectedCaseId);
   const selectedLocationId = useMapStore((state) => state.selectedLocationId);
+  const cameraRequest = useMapStore((state) => state.cameraRequest);
   const hoveredMarker = useMemo(() => hover && markers.find((marker) => marker.caseId === hover.id), [hover, markers]);
 
   useEffect(() => {
@@ -508,6 +549,7 @@ export function InvestigationMap() {
     map.addControl(new maplibregl.NavigationControl({ showZoom: true, showCompass: true, visualizePitch: true }), "bottom-right");
     map.addControl(new PitchControl(), "bottom-right");
     let orbitControl: OrbitControl;
+    let projectionRecolorPending = false;
     const stopOrbit = () => {
       orbitEnabledRef.current = false;
       if (orbitFrameRef.current !== null) cancelAnimationFrame(orbitFrameRef.current);
@@ -543,21 +585,44 @@ export function InvestigationMap() {
     startOrbitRef.current = startOrbit;
     map.addControl(orbitControl, "bottom-right");
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }), "bottom-left");
+    const reapplyAfterProjection = () => {
+      if (!projectionRecolorPending || !map.isStyleLoaded()) return;
+      projectionRecolorPending = false;
+      addMapLayers(map);
+      recolorMapStyle(map);
+      const st = useMapStore.getState();
+      const ds = map.getSource("secret-data") as maplibregl.GeoJSONSource | undefined;
+      ds?.setData(buildData(st.markers, st.showCases, st.showLocations, st.showRoutes, st.selectedCaseId, st.selectedLocationId));
+      if (map.getLayer("secret-location-labels")) map.setLayoutProperty("secret-location-labels", "visibility", st.showLabels && st.showLocations ? "visible" : "none");
+      if (map.getLayer("secret-routes")) map.setLayoutProperty("secret-routes", "visibility", st.showRoutes ? "visible" : "none");
+    };
+    map.on("idle", reapplyAfterProjection);
     const applyStyleTheme = () => {
       if (!map.isStyleLoaded()) return;
-      // Three.js custom layers use MapLibre's shared Mercator matrix reliably;
-      // keep the map fully 3D while making the overlay render in the same space.
-      map.setProjection({ type: "mercator" });
-      map.setSky({
-        "sky-color": "#050b14",
-        "horizon-color": "#102a43",
-        "fog-color": "#050b14",
-        "sky-horizon-blend": 0.72,
-        "horizon-fog-blend": 0.18,
-        "fog-ground-blend": 0.08,
-        "atmosphere-blend": 0.16,
+      // Bend the planet into a 3D globe like Google Earth, with atmospheric
+      // fog/glow so the round horizon and space read clearly behind the map.
+      const projection = map.getProjection();
+      if (projection?.type !== "globe") {
+        projectionRecolorPending = true;
+        map.setProjection({ type: "globe" });
+      }
+      map.setFog({
+        "range": [2, 9],
+        "color": "#0d1838",
+        "high-color": "#102a4a",
+        "horizon-color": "#0b1b35",
+        "space-color": "#050816",
+        "star-intensity": 0.08,
       });
       addMapLayers(map);
+      // Globe projection triggers an async style reload that wipes GeoJSON
+      // source data.  Re-inject the current marker set so case/location dots
+      // survive every reload cycle.
+      const st = useMapStore.getState();
+      const ds = map.getSource("secret-data") as maplibregl.GeoJSONSource | undefined;
+      if (ds) ds.setData(buildData(st.markers, st.showCases, st.showLocations, st.showRoutes, st.selectedCaseId, st.selectedLocationId));
+      if (map.getLayer("secret-location-labels")) map.setLayoutProperty("secret-location-labels", "visibility", st.showLabels && st.showLocations ? "visible" : "none");
+      if (map.getLayer("secret-routes")) map.setLayoutProperty("secret-routes", "visibility", st.showRoutes ? "visible" : "none");
       recolorMapStyle(map);
       if (!map.getLayer(threeOverlay.id)) map.addLayer(threeOverlay);
       setReady(true);
@@ -572,11 +637,26 @@ export function InvestigationMap() {
       store.selectLocation(id); store.selectEntity(location?.entityIds[0] ?? null); store.requestCamera("fit-location", id); setHover(null);
     };
     const onCaseClick = (event: MapMouseEvent) => {
-      const feature = event.features?.[0] as MapGeoJSONFeature | undefined;
+      const caseLayers = ["secret-cases", "secret-case-halos", "secret-case-labels"]
+        .filter((layerId) => Boolean(map.getLayer(layerId)));
+      const feature = (map.queryRenderedFeatures(event.point, { layers: caseLayers })[0] ?? event.features?.[0]) as MapGeoJSONFeature | undefined;
       const id = String(feature?.properties?.id ?? "");
       if (!id) return;
       const store = useMapStore.getState();
-      store.selectCase(id); store.selectEntity(null); store.requestCamera("fit-case", id); setHover(null);
+      const marker = store.markers.find((item) => item.caseId === id);
+      const location = marker ? primaryLocation(marker) : null;
+      store.selectCase(id);
+      store.selectEntity(null);
+      if (location) {
+        map.stop();
+        map.jumpTo({
+          center: [location.longitude, location.latitude],
+          zoom: 17,
+          pitch: 66,
+          bearing: map.getBearing() + 18,
+        });
+      }
+      setHover(null);
     };
     const onMove = (event: MapMouseEvent) => {
       const feature = event.features?.[0] as MapGeoJSONFeature | undefined;
@@ -592,6 +672,11 @@ export function InvestigationMap() {
     map.once("idle", applyStyleTheme);
     map.on("click", "secret-locations", onLocationClick);
     map.on("click", "secret-cases", onCaseClick);
+    map.on("click", "secret-case-halos", onCaseClick);
+    map.on("click", "secret-case-labels", onCaseClick);
+    // Query all case presentation layers so clicks on the glow or ID label
+    // trigger the same close-up camera as clicks on the core marker.
+    map.on("click", onCaseClick);
     map.on("mousemove", "secret-locations", onMove);
     map.on("mousemove", "secret-cases", onMove);
     map.on("mouseleave", "secret-locations", onLeave);
@@ -629,47 +714,36 @@ export function InvestigationMap() {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready) return;
-    return useMapStore.subscribe((state, previous) => {
-      const request = state.cameraRequest;
-      if (!request || request === previous.cameraRequest) return;
-      const resumeOrbit = orbitEnabledRef.current;
-      stopOrbitRef.current();
-      const resumeAfterFlight = () => { if (resumeOrbit && !orbitEnabledRef.current) startOrbitRef.current(); };
-      if (resumeOrbit) map.once("moveend", resumeAfterFlight);
-      if (request.kind === "reset") map.easeTo({ center: INDIA_CENTER, zoom: 4.8, pitch: 60, bearing: -14, duration: 1200, essential: true });
-      else if (request.kind === "fit-all") fitAll(map, state.markers);
-      else if (request.kind === "fit-point") {
-        const zoom = request.zoomDist <= 26 ? 17 : request.zoomDist <= 40 ? 15 : 11.5;
-        const pitch = request.zoomDist <= 26 ? 64 : request.zoomDist <= 40 ? 60 : 52;
-        const target: [number, number] = [request.lon, request.lat];
-        const camera = cinematicCameraOptions(map, target, map.getBearing() + 18, request.zoomDist <= 26 ? 220 : 420, request.zoomDist <= 26 ? 140 : 240);
-        map.flyTo({ ...camera, zoom, pitch, bearing: map.getBearing() + 18, duration: 1500, essential: true });
+    if (!map || !ready || !cameraRequest) return;
+    const request = cameraRequest;
+    const state = useMapStore.getState();
+    const resumeOrbit = orbitEnabledRef.current;
+    stopOrbitRef.current();
+    const resumeAfterFlight = () => { if (resumeOrbit && !orbitEnabledRef.current) startOrbitRef.current(); };
+    if (resumeOrbit) map.once("moveend", resumeAfterFlight);
+    if (request.kind === "reset") map.easeTo({ center: INDIA_CENTER, zoom: 4.8, pitch: 60, bearing: -14, duration: 1200, essential: true });
+    else if (request.kind === "fit-all") fitAll(map, state.markers);
+    else if (request.kind === "fit-point") {
+      const zoom = request.zoomDist <= 26 ? 17 : request.zoomDist <= 40 ? 15 : 11.5;
+      const pitch = request.zoomDist <= 26 ? 64 : request.zoomDist <= 40 ? 60 : 52;
+      const target: [number, number] = [request.lon, request.lat];
+      const camera = cinematicCameraOptions(map, target, map.getBearing() + 18, request.zoomDist <= 26 ? 220 : 420, request.zoomDist <= 26 ? 140 : 240);
+      map.flyTo({ ...camera, zoom, pitch, bearing: map.getBearing() + 18, duration: 1500, essential: true });
+    } else if (request.kind === "fit-location") {
+      const location = state.locationById(request.locationId);
+      if (location) {
+        const target: [number, number] = [location.longitude, location.latitude];
+        map.flyTo({ center: target, zoom: 17, pitch: 64, bearing: map.getBearing() + 18, duration: 1700, essential: true });
       }
-      else if (request.kind === "fit-location") {
-        const location = state.locationById(request.locationId);
-        if (location) {
-          const target: [number, number] = [location.longitude, location.latitude];
-          const camera = cinematicCameraOptions(map, target, map.getBearing() + 18, 220, 140);
-          map.flyTo({ ...camera, zoom: 17, pitch: 64, bearing: map.getBearing() + 18, duration: 1500, essential: true });
-        }
-      } else if (request.kind === "fit-case") {
-        const marker = state.markers.find((item) => item.caseId === request.caseId);
-        if (marker) {
-          if (marker.locations.length === 1) {
-            const [location] = marker.locations;
-            const target: [number, number] = [location.longitude, location.latitude];
-            const camera = cinematicCameraOptions(map, target, map.getBearing() + 18, 220, 140);
-            map.flyTo({ ...camera, zoom: 17, pitch: 64, bearing: map.getBearing() + 18, duration: 1500, essential: true });
-            return;
-          }
-          const bounds = new maplibregl.LngLatBounds();
-          marker.locations.forEach((location) => bounds.extend([location.longitude, location.latitude]));
-          map.fitBounds(bounds, { padding: [88, 88], maxZoom: 17, pitch: 62, bearing: map.getBearing() + 18, duration: 1500, essential: true });
-        }
+    } else if (request.kind === "fit-case") {
+      const marker = state.markers.find((item) => item.caseId === request.caseId);
+      const location = marker ? primaryLocation(marker) : null;
+      if (location) {
+        const target: [number, number] = [location.longitude, location.latitude];
+        map.flyTo({ center: target, zoom: 17, pitch: 66, bearing: map.getBearing() + 18, duration: 1700, essential: true });
       }
-    });
-  }, [ready]);
+    }
+  }, [cameraRequest, ready]);
 
   return (
     <div className="globe-shell maplibre-globe-shell">

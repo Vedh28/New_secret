@@ -93,7 +93,7 @@ export function AssistantPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiAskAssistant(question, caseKey);
+      const res = backend === "backend" ? await apiAskAssistant(question, caseKey) : demoAssistant(question);
       setResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Assistant unavailable");
@@ -109,7 +109,7 @@ export function AssistantPage() {
       subtitle={backend === "backend" ? "Evidence-grounded, structured case intelligence" : "Structured demo intelligence"}
       rightMeta={<><div>STRUCTURED</div>{backend === "backend" ? <div>LIVE</div> : <div>DEMO</div>}</>}
     >
-      <div className="hud-assistant-layout" style={{ maxWidth: 860, display: "grid", gap: 16 }}>
+      <div className="hud-assistant-layout">
         <HudCard label="Query console" title="Ask an investigative question">
           <input
             className="control hud-search"
@@ -119,10 +119,7 @@ export function AssistantPage() {
             placeholder='e.g. "Show connections of P-0421", "potential links", "anomalies", "case overview"'
           />
           <div className="hud-search-hints">
-            <span className="glass-strip">Try: connections of P-0421</span>
-            <span className="glass-strip">Try: potential links</span>
-            <span className="glass-strip">Try: anomalies</span>
-            <span className="glass-strip">Try: case overview</span>
+            {["connections of P-0421", "potential links", "anomalies", "case overview"].map((hint) => <button key={hint} className="glass-strip hud-assistant-hint" onClick={() => setQuestion(hint)}>TRY: {hint}</button>)}
           </div>
           <button className="cta" onClick={ask} disabled={loading} style={{ marginTop: 14 }}>
             {loading ? "ANALYZING..." : "ASK ASSISTANT"}
@@ -132,6 +129,12 @@ export function AssistantPage() {
         {error ? (
           <HudCard label="System" title="Unavailable">
             <div className="meta">{error}</div>
+          </HudCard>
+        ) : !result ? (
+          <HudCard label="Assistant status" title="Ready for analysis" className="hud-assistant-welcome">
+            <div className="hud-assistant-orbit"><span /><i /><i /><i /></div>
+            <div className="meta">Ask about relationships, potential links, anomalies or the case overview. The assistant returns structured evidence, gaps and a next-best action.</div>
+            <div className="hud-assistant-status-grid"><div><span>MODE</span><strong>{backend === "backend" ? "LIVE" : "DEMO"}</strong></div><div><span>SOURCES</span><strong>02</strong></div><div><span>OUTPUT</span><strong>STRUCTURED</strong></div></div>
           </HudCard>
         ) : null}
 
@@ -152,4 +155,38 @@ export function AssistantPage() {
       </div>
     </HudPage>
   );
+}
+
+function demoAssistant(question: string): AssistantResponse {
+  const q = question.toLowerCase();
+  const isConnections = q.includes("connection") || q.includes("relationship") || q.includes("link");
+  const isAnomaly = q.includes("anomal") || q.includes("signal") || q.includes("burst");
+  const relationships = isConnections ? [
+    { source: "P-0421", target: "P-0312", kind: "POTENTIAL", confidence: 0.73 },
+    { source: "N-4821", target: "N-9044", kind: "CONFIRMED", confidence: 0.91 },
+  ] : [];
+  const anomalies = isAnomaly ? [
+    "COMM_BURST: N-4821 shows 5 calls in one hour versus a baseline of 1.",
+    "TX_AMOUNT: A-4200 to A-0182 transfer is 2.4M versus a 650K median.",
+  ] : ["COMM_BURST: N-4821 is the highest-scoring investigative signal."];
+  const summary = isConnections
+    ? "Two relationship signals were found: one potential link requiring confirmation and one confirmed communication link."
+    : isAnomaly
+      ? "Two unusual signals need review. These are investigative signals, not findings."
+      : "The demo case contains three communities, high bridge dependence and two priority signals requiring evidence validation.";
+  const structured: IntelligenceResponse = {
+    type: isConnections ? "relationships" : isAnomaly ? "anomalies" : "case_overview",
+    query: question,
+    summary,
+    key_findings: [{ label: "Network", detail: "3 communities connected through a small number of bridge entities." }, { label: "Coverage", detail: "78% evidence coverage; independent confirmation is still required." }],
+    entities: [{ id: "P-0421", type: "Person", name: "P-0421", priority: 88 }, { id: "N-4821", type: "Phone", name: "N-4821", priority: 73 }],
+    relationships,
+    anomalies,
+    evidence: ["Shared location", "Common intermediary", "Communication activity"],
+    evidence_gaps: ["Direct communication or transfer evidence for P-0421 ↔ P-0312", "Independent confirmation from a second source type"],
+    next_best_action: { kind: "RELATIONSHIP", subject: "P-0421 ↔ P-0312", priority: 88, info_gain: 81, reasoning: ["Connects two communities", "Multiple sources support the potential relationship"], recommended_data: "CDR and location records", window: "14-day observation window" },
+    source_ids: ["DEMO-NETWORK-01", "DEMO-SIGNAL-02"],
+    found: true,
+  };
+  return { question, answer: summary, source_ids: structured.source_ids, found: true, structured };
 }

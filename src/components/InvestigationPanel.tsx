@@ -197,7 +197,22 @@ export function MapControls() {
   }, [searchQuery, searchIndex]);
 
   const handleSelectPlace = (item: SearchItem) => {
-    store.getState().flyToGeo(item.lat, item.lon, item.zoomDist);
+    const state = store.getState();
+    if (item.type === "case") {
+      const marker = state.markers.find((candidate) => candidate.title === item.name);
+      if (marker) {
+        state.selectCase(marker.caseId);
+        state.requestCamera("fit-case", marker.caseId);
+      }
+    } else if (item.type === "location") {
+      const location = state.markers.flatMap((marker) => marker.locations).find((candidate) => candidate.name === item.name);
+      if (location) {
+        state.selectLocation(location.id);
+        state.requestCamera("fit-location", location.id);
+      }
+    } else {
+      state.flyToGeo(item.lat, item.lon, item.zoomDist);
+    }
     setSearchQuery(item.name);
     setShowResults(false);
   };
