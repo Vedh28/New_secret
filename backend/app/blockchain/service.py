@@ -90,81 +90,87 @@ class BlockchainIntegrityService:
     async def flush_pending(self, case_id: str, max_events: int = 200) -> list[dict]:
         """Append ONE chained block for the case containing pending events.
 
-        Returns [{outbox_id, transaction_id, block_index}] for confirmed
-        appends. On any ledger failure, marks pending rows FAILED (retryable)
-        and returns [] — never raises into the investigation pipeline.
+        The per-case lock (advisory on PostgreSQL; DB-wide write lock on SQLite)
+        is acquired BEFORE pending rows are read and held until the caller
+        commits/rolls back. The locked critical section is extracted into
+        ``_flush_locked`` so integration tests can pause Worker A inside it
+        and prove Worker B truly blocks.
         """
         case_id = _normalize_case(case_id)
-        # Serialize the WHOLE read -> compute -> append -> confirm section for
-        # this case (transaction-scoped; PostgreSQL advisory lock in production,
-        # SQLite functional lock in tests). The lock is released only when the
-        # caller commits/rolls back the enclosing transaction.
         from app.blockchain.locking import acquire_case_flush_lock
 
         async with acquire_case_flush_lock(self._session, case_id):
-            # Re-read pending rows AFTER acquiring the lock so we never build on
-            # stale state another worker may have already flushed.
-            pending = await IntegrityOutboxRepository(self._session).pending_for_case(
-                case_id, limit=max_events, max_attempts=MAX_ATTEMPTS)
-            if not pending:
-                return []
+            return (await self._flush_locked(case_id, max_events)) or []
 
-            latest = await self._store.latest_block(case_id)
-            events: list[dict] = []
-            planned: list[tuple] = []
-            for outbox in pending:
-                tx = _tx_id()
-                ev = {
-                    "transaction_id": tx,
-                    "event_type": outbox.event_type,
-                    "entity_type": outbox.entity_type,
-                    "entity_id": outbox.entity_id,
-                    "payload_hash": outbox.payload_hash,
-                    "payload_json": outbox.payload_json,
-                    "actor_id": outbox.actor_id,
-                    "hash": outbox.payload_hash,
-                }
-                events.append(ev)
-                planned.append((outbox, tx))
+    # Extracted so tests can monkeypatch it and insert a deterministic pause
+    # while the lock is held.
+    async def _flush_locked(self, case_id: str, max_events: int = 200) -> list[dict] | None:
+        """The actual read → compute → append → confirm critical section.
 
-            try:
-                block = self._engine.compute_block(previous=latest, case_id=case_id, events=events)
-                await self._store.append_block(block)
-            except Exception as exc:  # noqa: BLE001 - integrity outage must not break case work
-                logger.warning("integrity ledger append failed for case=%s events=%d: %s",
-                               case_id, len(planned), exc)
-                for outbox, _tx in planned:
-                    outbox.attempts = (outbox.attempts or 0) + 1
-                    outbox.last_error = str(exc)[:500]
-                    outbox.status = "FAILED" if outbox.attempts >= MAX_ATTEMPTS else "PENDING"
-                    await IntegrityOutboxRepository(self._session).save(outbox)
-                return []
+        Must be called WHILE the case lock is already held.  Returns [] when
+        there is nothing pending, or a list of confirmed outbox entries.
+        """
+        pending = await IntegrityOutboxRepository(self._session).pending_for_case(
+            case_id, limit=max_events, max_attempts=MAX_ATTEMPTS)
+        if not pending:
+            return None
 
-            event_repo = LedgerEventRepository(self._session)
-            outbox_repo = IntegrityOutboxRepository(self._session)
-            confirmed: list[dict] = []
-            for outbox, tx in planned:
-                await event_repo.create(
-                    transaction_id=tx,
-                    case_id=case_id,
-                    event_type=outbox.event_type,
-                    entity_type=outbox.entity_type,
-                    entity_id=outbox.entity_id,
-                    payload_hash=outbox.payload_hash,
-                    payload_json=outbox.payload_json,
-                    actor_id=outbox.actor_id,
-                    block_index=block.index,
-                    block_hash=block.hash,
-                    previous_block_hash=block.previous_hash,
-                    status="REGISTERED",
-                )
-                outbox.status = "CONFIRMED"
-                outbox.ledger_transaction_id = tx
-                outbox.processed_at = datetime.now(timezone.utc)
-                outbox.last_error = None  # cleared on a successful retry
-                await outbox_repo.save(outbox)
-                confirmed.append({"outbox_id": outbox.id, "transaction_id": tx, "block_index": block.index})
-            return confirmed
+        latest = await self._store.latest_block(case_id)
+        events: list[dict] = []
+        planned: list[tuple] = []
+        for outbox in pending:
+            tx = _tx_id()
+            ev = {
+                "transaction_id": tx,
+                "event_type": outbox.event_type,
+                "entity_type": outbox.entity_type,
+                "entity_id": outbox.entity_id,
+                "payload_hash": outbox.payload_hash,
+                "payload_json": outbox.payload_json,
+                "actor_id": outbox.actor_id,
+                "hash": outbox.payload_hash,
+            }
+            events.append(ev)
+            planned.append((outbox, tx))
+
+        try:
+            block = self._engine.compute_block(previous=latest, case_id=case_id, events=events)
+            await self._store.append_block(block)
+        except Exception as exc:  # noqa: BLE001 - integrity outage must not break case work
+            logger.warning("integrity ledger append failed for case=%s events=%d: %s",
+                           case_id, len(planned), exc)
+            for outbox, _tx in planned:
+                outbox.attempts = (outbox.attempts or 0) + 1
+                outbox.last_error = str(exc)[:500]
+                outbox.status = "FAILED" if outbox.attempts >= MAX_ATTEMPTS else "PENDING"
+                await IntegrityOutboxRepository(self._session).save(outbox)
+            return []
+
+        event_repo = LedgerEventRepository(self._session)
+        outbox_repo = IntegrityOutboxRepository(self._session)
+        confirmed: list[dict] = []
+        for outbox, tx in planned:
+            await event_repo.create(
+                transaction_id=tx,
+                case_id=case_id,
+                event_type=outbox.event_type,
+                entity_type=outbox.entity_type,
+                entity_id=outbox.entity_id,
+                payload_hash=outbox.payload_hash,
+                payload_json=outbox.payload_json,
+                actor_id=outbox.actor_id,
+                block_index=block.index,
+                block_hash=block.hash,
+                previous_block_hash=block.previous_hash,
+                status="REGISTERED",
+            )
+            outbox.status = "CONFIRMED"
+            outbox.ledger_transaction_id = tx
+            outbox.processed_at = datetime.now(timezone.utc)
+            outbox.last_error = None  # cleared on a successful retry
+            await outbox_repo.save(outbox)
+            confirmed.append({"outbox_id": outbox.id, "transaction_id": tx, "block_index": block.index})
+        return confirmed
 
     async def _append_and_link(self, *, case_id: str, event_type: str, entity_type: str | None,
                                entity_id: str | None, payload: dict, actor_id: int | None,

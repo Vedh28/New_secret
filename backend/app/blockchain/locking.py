@@ -11,12 +11,23 @@ POSTGRESQL (production):
 
 SQLITE (tests / non-PG dev):
     Advisory locks do not exist, so we serialize the same critical section
-    using SQLite's transaction file lock:
+    using SQLite's DATABASE/FILE-WIDE transaction write lock:
 
         UPSERT into integrity_flush_locks  -- an ALWAYS-WRITE statement
         (INSERT ... ON CONFLICT (case_id) DO UPDATE SET holder=:new_holder)
 
-    Why this is correct (and why the previous INSERT ... DO NOTHING was not):
+    IMPORTANT SEMANTIC DIFFERENCE:
+    - PostgreSQL: the advisory lock is CASE-SCOPED — Case A and Case B flush
+      independently and never block each other.
+    - SQLite: the write lock is DATABASE-WIDE, not per-case. Two different
+      cases touching the SAME SQLite file serialize through the file-level
+      writer lock. This preserves CORRECTNESS (no lost/duplicate events) but
+      does NOT give per-case parallelism. This limitation does NOT apply to
+      PostgreSQL production. We do NOT attempt to fake per-case SQLite locks
+      with Python mutexes — the DB-wide writer lock is the honest mechanism.
+
+    Why the always-write UPSERT is required (and why the previous
+    INSERT ... DO NOTHING was not):
     - A plain INSERT that resolves to "DO NOTHING" because the row already
       exists performs NO write, so it never acquires SQLite's reserved write
       lock — later flushes ran unserialized.
@@ -25,16 +36,15 @@ SQLITE (tests / non-PG dev):
       flush transaction, BEFORE any pending rows or the latest block are read.
     - The reserved write lock is held until the enclosing transaction COMMITs
       or ROLLBACKs, then released automatically.
-    - No lock rows are "left behind" in a way that matters: the row is a
-      token; serialization comes from the transaction's write lock, not from
-      the row's existence. Every flush re-writes it inside a fresh transaction.
+    - Lock rows are bookkeeping tokens; serialization comes from the
+      transaction's write lock, not from row existence.
     - Works across independent AsyncSession instances/connections on the same
       SQLite file (each holds its own connection; the DB engine arbitrates).
 
-    SQLite handles a second concurrent writer by waiting up to the connection's
-    busy timeout and then failing with SQLITE_BUSY. Tests set a generous
-    `connect_args={"timeout": ...}` so the waiting worker proceeds after the
-    first worker commits.
+    SQLite blocks a second concurrent writer until the first commits or the
+    connection's busy timeout expires (then SQLITE_BUSY). The concurrency
+    tests configure a generous busy timeout (~30s) so the waiting worker
+    proceeds after the winner commits.
 
 WHY NO PROCESS-LOCAL LOCK
     asyncio.Lock / threading.Lock / module dictionaries / singleton mutexes
@@ -49,7 +59,18 @@ TRANSACTION BOUNDARY
     transaction, and RETURNS WITHOUT COMMITTING. The caller commits after
     flush_pending() returns (existing endpoint/service contract). Both the
     lock (PostgreSQL advisory / SQLite write lock) and all writes therefore
-    commit or roll back TOGETHER.
+    commit or roll back TOGETHER — a rollback removes the ledger block, ledger
+    events, outbox confirmation changes and the lock state atomically.
+
+REENTRANCY
+    A single service call may take the lock more than once within the SAME
+    transaction (e.g. record_analyst_decision -> _dedupe_outbox -> lock, then
+    flush_pending -> lock again). This is safe:
+    - PostgreSQL: pg_advisory_xact_lock is per-session AND per-transaction;
+      re-acquiring the same key inside the same transaction is a no-op.
+    - SQLite: the always-write UPSERT simply re-writes the token row while the
+      same transaction already holds the file write lock — a no-op contention
+      -wise.
 """
 from __future__ import annotations
 

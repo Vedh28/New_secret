@@ -27,8 +27,18 @@ from app.repositories.integrity_repository import IntegrityOutboxRepository, Led
 
 @pytest.fixture()
 async def concurrency_ctx(tmp_path):
-    """File-backed SQLite engine shared by independent sessions."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'conc.db'}")
+    """File-backed SQLite engine shared by independent sessions.
+
+    A generous busy timeout lets the second, waiting SQLite connection block on
+    the DB-wide writer lock until Worker A commits — mirroring how PostgreSQL's
+    advisory lock would let it wait. SQLite serialization is database-wide, so
+    these tests verify CORRECTNESS (no lost/duplicate events, valid chains) and
+    cross-case isolation, not per-case parallelism.
+    """
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'conc.db'}",
+        connect_args={"timeout": 30},
+    )
     Maker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -434,6 +444,106 @@ class TestConcurrentFlush:
                     _flush_and_commit(svc_a, sa, case_id),
                     _flush_and_commit(svc_b, sb, case_id),
                 ))
+
+
+# ---------------------------------------------------------------------------
+# Deterministic lock contention (Phase 3) + exhausted dedupe (Phase 5)
+# ---------------------------------------------------------------------------
+
+class TestLockContention:
+    async def test_worker_b_waits_until_worker_a_commits(self, concurrency_ctx):
+        """Deterministic: Worker A holds the lock mid-critical-section; Worker
+        B cannot enter until A commits; B then re-reads and does not duplicate."""
+        from app.blockchain.service import BlockchainIntegrityService
+
+        maker = concurrency_ctx["maker"]
+        case_id = concurrency_ctx["case_a"]
+        async with maker() as session:
+            await _enqueue(session, case_id, "EVIDENCE_REGISTERED", "SRC-C1", "c1")
+            await session.commit()
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original = BlockchainIntegrityService._flush_locked
+
+        async with maker() as sa:
+            async with maker() as sb:
+                svc_a = BlockchainIntegrityService(sa)
+                svc_b = BlockchainIntegrityService(sb)
+
+                async def _paused(cid, max_events=200):
+                    entered.set()
+                    await release.wait()  # hold the lock; other workers wait
+                    return await original(svc_a, cid, max_events)
+
+                svc_a._flush_locked = _paused  # instance override for Worker A
+
+                async def _worker_a():
+                    result = await svc_a.flush_pending(case_id)
+                    await sa.commit()
+                    return result
+
+                async def _worker_b():
+                    result = await svc_b.flush_pending(case_id)
+                    await sb.commit()
+                    return result
+
+                task_a = asyncio.create_task(_worker_a())
+                await entered.wait()  # A is now INSIDE the critical section
+                task_b = asyncio.create_task(_worker_b())
+
+                # Probe (short timeout, barrier-controlled): B must still be
+                # blocked on the case lock — not merely "may be sleeping".
+                done, _pending = await asyncio.wait(
+                    [task_b], timeout=0.3, return_when=asyncio.FIRST_COMPLETED)
+                assert task_b not in done, "Worker B entered while Worker A held the lock"
+
+                release.set()
+                result_a = await task_a
+                result_b = await task_b
+
+        assert len(result_a) == 1
+        assert result_b == []  # B re-read pending AFTER A committed -> none
+
+        async with maker() as session:
+            events = await BlockchainIntegrityService(session).get_events(case_id)
+            assert len(events) == 1
+            blocks = await LedgerBlockRepository(session).chain(case_id)
+            assert len(blocks) == 1
+            verifying = LocalPermissionedLedger().verify_chain(
+                [_chain_block(b) for b in blocks], LocalPermissionedLedger().genesis_params(case_id))
+            assert verifying.chain_valid is True
+
+
+class TestExhaustedDedupe:
+    async def test_exhausted_dedupe_row_reports_terminal_no_new_event(self, concurrency_ctx):
+        from app.blockchain.service import BlockchainIntegrityService, MAX_ATTEMPTS
+        from app.repositories.integrity_repository import IntegrityOutboxRepository
+
+        maker = concurrency_ctx["maker"]
+        case_id = concurrency_ctx["case_a"]
+        snapshot_hash = "SH-TERMINAL"
+
+        async with maker() as session:
+            await IntegrityOutboxRepository(session).create(
+                case_id=str(case_id), event_type="INTELLIGENCE_SNAPSHOT",
+                entity_type="case", entity_id=str(case_id),
+                payload_hash="H", payload_json={"snapshot_hash": snapshot_hash},
+                actor_id=None, status="FAILED", attempts=MAX_ATTEMPTS,
+                last_error="exhausted", dedupe_key=f"{case_id}::INTELLIGENCE_SNAPSHOT::1.x::{snapshot_hash}",
+            )
+            await session.commit()
+
+        async with maker() as session:
+            svc = BlockchainIntegrityService(session)
+            result = await svc.enqueue_snapshot(case_id=case_id, snapshot_hash=snapshot_hash,
+                                                engine_version="1.x")
+            assert result["exhausted"] is True
+            assert result["duplicate"] is True
+            # flush must NOT retry the exhausted row and must not create an event.
+            assert await svc.flush_pending(case_id) == []
+            assert await svc.get_events(case_id) == []
+            assert await svc.pending_count(case_id) == 0
 
 
 def _chain_block(row) -> object:
