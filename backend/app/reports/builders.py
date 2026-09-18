@@ -398,4 +398,24 @@ async def _case_intelligence_sections(session: AsyncSession, case) -> list[Repor
         )
     )
 
+    try:
+        from app.blockchain.service import BlockchainIntegrityService
+        summary = await BlockchainIntegrityService(session).case_summary(case.id)
+        sections.append(
+            ReportSection(
+                heading="Evidence Integrity Summary",
+                body=_fmt_lines({
+                    "Evidence registered": summary.get("evidence_registered", 0),
+                    "Evidence verified": summary.get("evidence_verified", 0),
+                    "Integrity mismatches": summary.get("mismatches", 0),
+                    "Ledger": summary.get("chain_status", "UNAVAILABLE"),
+                    "Ledger blocks": summary.get("blocks", 0),
+                    "Latest integrity transaction": (summary.get("latest_block") or {}).get("events", [{}])[-1].get("transaction_id", "—")
+                    if (summary.get("latest_block") or {}).get("events") else "—",
+                }),
+            )
+        )
+    except Exception:  # noqa: BLE001 - integrity summary is optional in reports
+        pass
+
     return sections

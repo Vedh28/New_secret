@@ -17,6 +17,7 @@ from app.api.v1 import (
     dashboard,
     graph,
     health,
+    integrity,
     intelligence,
     leads,
     reports,
@@ -41,3 +42,4 @@ api_router.include_router(graph.router, prefix="/graph", tags=["graph"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(analysis.router, prefix="/analysis", tags=["analysis"])
 api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
+api_router.include_router(integrity.router, prefix="/integrity", tags=["integrity"])

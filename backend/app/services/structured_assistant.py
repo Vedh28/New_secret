@@ -37,6 +37,8 @@ class AssistantDataUnavailable(RuntimeError):
 
 
 def _intent(q: str) -> str:
+    if any(k in q for k in ("integrity", "blockchain", "verified", "ledger", " hash")):
+        return "INTEGRITY_QUERY"
     if _ENTITY_RE.search(q) and any(k in q for k in ("connection", "relationship", "neighbor", "link")):
         return "RELATIONSHIP_QUERY"
     if _ENTITY_RE.search(q):
@@ -84,6 +86,7 @@ class StructuredAssistant:
         self._session = session
         self._store = store
         self._case_key: str | None = None
+        self._integrity: dict | None = None
 
     async def answer(
         self,
@@ -91,6 +94,7 @@ class StructuredAssistant:
         case_key: str | None = None,
         intel: dict | None = None,
         case_data: CaseData | None = None,
+        integrity: dict | None = None,
         offline: bool = False,
     ) -> IntelligenceResponse:
         """Answer from ONE explicit source: live snapshot or offline demo.
@@ -99,6 +103,7 @@ class StructuredAssistant:
         `offline=True` is passed explicitly.
         """
         self._case_key = case_key
+        self._integrity = integrity
         intent = _intent(question.lower())
 
         if offline:
@@ -114,6 +119,8 @@ class StructuredAssistant:
         return self._build(question, intent)
 
     def _build(self, question: str, intent: str) -> IntelligenceResponse:
+        if intent == "INTEGRITY_QUERY":
+            return self._integrity_response(question)
         match = _ENTITY_RE.search(question)
         entity_id = match.group(1).upper() if match else None
         entity = self._data.entity(entity_id) if entity_id else None
@@ -143,6 +150,31 @@ class StructuredAssistant:
             summary=f"No supporting evidence found in the selected case for {entity_id}. "
                     "The case may not contain a record naming it.",
             found=False,
+        )
+
+    def _integrity_response(self, question: str) -> IntelligenceResponse:
+        integrity = self._integrity or {}
+        chain_status = integrity.get("chain_status", "UNAVAILABLE")
+        return IntelligenceResponse(
+            type="INTEGRITY_QUERY",
+            query=question,
+            summary=(
+                f"Evidence integrity: {integrity.get('evidence_registered', 0)} source(s) registered, "
+                f"{integrity.get('evidence_verified', 0)} verified, {integrity.get('mismatches', 0)} "
+                f"mismatch(es); chain status {chain_status}. "
+                "Verified means the referenced data matches its registered cryptographic "
+                "representation — not that an analytical interpretation is proven."
+            ),
+            key_findings=[
+                KeyFinding(label="Chain status", detail=str(chain_status)),
+                KeyFinding(label="Evidence registered", detail=str(integrity.get("evidence_registered", 0))),
+                KeyFinding(label="Evidence verified", detail=str(integrity.get("evidence_verified", 0))),
+                KeyFinding(label="Integrity mismatches", detail=str(integrity.get("mismatches", 0))),
+                KeyFinding(label="Ledger events", detail=str(integrity.get("events", 0))),
+                KeyFinding(label="Latest block",
+                           detail=f"#{integrity.get('latest_block', {}).get('index')}" if (integrity.get("latest_block") or {}).get("index") is not None else "none"),
+            ],
+            found=True,
         )
 
     def _entity_response(self, question: str, entity) -> IntelligenceResponse:
@@ -296,7 +328,10 @@ class StructuredAssistant:
                 KeyFinding(label="Communities", detail=str(dna.get("community_count", 0))),
                 KeyFinding(label="Evidence coverage", detail=f"{dna.get('evidence_coverage', 0)}%"),
                 KeyFinding(label="Analyst confirmed links", detail=str(len(confirmed))),
-            ],
+            ] + ([KeyFinding(label="Evidence integrity",
+                              detail=f"{self._integrity.get('chain_status', 'UNAVAILABLE')} · "
+                                     f"{self._integrity.get('evidence_verified', 0)}/{self._integrity.get('evidence_registered', 0)} verified")]
+                 if self._integrity else []),
             entities=[
                 AssistantEntity(id=e.id, type=e.type, name=e.name,
                                 priority=_entity_priority(intel, e.id))

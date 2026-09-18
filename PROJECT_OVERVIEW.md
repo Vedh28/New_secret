@@ -454,3 +454,28 @@ This keeps the system's key boundaries intact: the UI remains replaceable, the A
 | Local infrastructure | `backend/docker-compose.yml`, `backend/DEPLOYMENT.md` |
 | Tests | `backend/tests/` |
 
+
+
+## 16. Evidence Integrity & Blockchain Layer
+
+SECRET uses blockchain as a tamper-evident integrity and provenance layer for investigative evidence and analytical events. Sensitive evidence remains off-chain in the authoritative case store (PostgreSQL); cryptographic hashes and integrity metadata are recorded in a permissioned ledger so that subsequent changes can be detected.
+
+Persistence ownership:
+
+- PostgreSQL: authoritative operational data
+- Neo4j: derived investigation graph
+- NetworkX: analytics computation
+- Blockchain: integrity / provenance (hashes + references only)
+
+Implementation (`backend/app/blockchain/`):
+
+- `hashes.py` deterministic SHA-256 canonical hashing (stable JSON, normalized primitives)
+- `merkle.py` deterministic Merkle roots for batched record integrity
+- `local_ledger.py` permissioned per-case chained blocks (genesis -> block -> block)
+- `adapters/local.py` PostgreSQL-backed ledger store; `adapters/evm.py` configuration-driven stub
+- `service.py` OUTBOX pattern: pending integrity events -> one chained block -> `ledger_events`; verification recomputes hashes and reports VERIFIED / MISMATCH / UNAVAILABLE honestly
+- `ALWAYS` case-scoped; RBAC-protected; never exposes raw evidence or PII
+
+Event types: EVIDENCE_REGISTERED, EVIDENCE_PROCESSED, RECORD_BATCH_REGISTERED, EVIDENCE_VERSION_CREATED, ENTITY_EXTRACTED, RELATIONSHIP_DERIVED, ANALYST_DECISION, INTELLIGENCE_SNAPSHOT, REPORT_GENERATED.
+
+A verified integrity hash means "the referenced data matches its registered cryptographic representation" — it does NOT prove an analytical interpretation or relationship is true. Potential relationships remain POTENTIAL until an analyst confirms them. Blockchain failure never blocks investigation analytics (`LEDGER_UNAVAILABLE` / PENDING instead of silent success).

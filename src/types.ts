@@ -14,7 +14,8 @@ export type Section =
   | "settings"
   | "assistant"
   | "simulation"
-  | "audit";
+  | "audit"
+  | "integrity";
 
 export type EntityType = "Person" | "Organization" | "Vehicle" | "Phone" | "Location" | "Account";
 

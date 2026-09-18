@@ -21,12 +21,31 @@ async def generate_report(
     user: CurrentUser,
 ) -> ReportResponse:
     report = await ReportService(session, store, user).generate(payload)
+    case_key = getattr(payload, "case_number", None)
+    case_id = None
+    if case_key:
+        from app.repositories.case_repository import CaseRepository
+        case = await CaseRepository(session).get_by_case_number(case_key) or (
+            await CaseRepository(session).get(int(case_key)) if str(case_key).isdigit() else None
+        )
+        case_id = case.id if case else None
+    integrity = None
+    if case_id is not None:
+        try:
+            from app.blockchain.service import BlockchainIntegrityService
+            integrity = await BlockchainIntegrityService(session).register_report(
+                case_id=case_id, report=report, actor_id=user.id,
+            )
+        except Exception:  # noqa: BLE001 - integrity failure must not break reporting
+            integrity = None
     try:
         from app.services.audit_service import AuditService
         await AuditService(session).record(
             user, "report_generated", object_type="report", object_id=report.id,
             result={"report_type": report.report_type,
-                    "case_number": getattr(payload, "case_number", None) or ""},
+                    "case_number": case_key or "",
+                    "integrity_tx": (integrity or {}).get("transaction_id") or "",
+                    "report_hash": (integrity or {}).get("report_hash") or ""},
         )
         await session.commit()
     except Exception:  # noqa: BLE001

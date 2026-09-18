@@ -347,6 +347,122 @@ export async function apiCaseGraph(caseKey: string): Promise<GraphResponse> {
   return request<GraphResponse>(`/api/v1/cases/${encodeURIComponent(caseKey)}/graph`);
 }
 
+// --- Evidence integrity / blockchain ledger (integrity layer) ---------------
+
+export interface IntegrityEvent {
+  transaction_id: string;
+  case_id: string;
+  event_type: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  payload_hash: string;
+  payload_json: Record<string, unknown>;
+  block_index: number | null;
+  block_hash: string | null;
+  previous_block_hash: string | null;
+  actor_id: number | null;
+  status: string;
+  created_at: string;
+}
+
+export interface IntegrityBlock {
+  index: number;
+  timestamp: string;
+  previous_hash: string;
+  data_hash: string;
+  block_hash: string;
+  case_id: string;
+  events: Record<string, unknown>[];
+}
+
+export interface IntegritySummary {
+  case_id: string;
+  chain_status: "VALID" | "WARNING" | "MISMATCH" | "UNAVAILABLE";
+  chain_valid: boolean;
+  blocks: number;
+  events: number;
+  evidence_registered: number;
+  evidence_verified: number;
+  mismatches: number;
+  verified_snapshots: number;
+  verified_reports: number;
+  latest_block: IntegrityBlock | null;
+  issues?: string[];
+}
+
+export interface EvidenceIntegrityInfo {
+  case_id: string;
+  source_id: string;
+  evidence_hash: string;
+  content_hash: string;
+  hash_algorithm: string;
+  version: number;
+  status: string;
+  transaction_id: string | null;
+  block_index: number | null;
+  created_at: string;
+}
+
+export interface RecordVerification {
+  verified: boolean;
+  status: string;
+  record_hash?: string;
+  merkle_root?: string | null;
+  record_count?: number;
+  transaction_id?: string | null;
+  block_index?: number | null;
+  reason?: string;
+  versions?: unknown[];
+}
+
+export async function apiIntegritySummary(caseKey: string): Promise<IntegritySummary> {
+  return request<IntegritySummary>(`/api/v1/integrity/${encodeURIComponent(caseKey)}`);
+}
+
+export async function apiIntegrityEvents(caseKey: string): Promise<{ case_id: string; events: IntegrityEvent[]; pending: number }> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/events`);
+}
+
+export async function apiIntegrityLedger(caseKey: string): Promise<{ case_id: string; blocks: IntegrityBlock[] }> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/ledger`);
+}
+
+export async function apiEvidenceIntegrity(caseKey: string, sourceId: string): Promise<RecordVerification> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/evidence/${encodeURIComponent(sourceId)}`);
+}
+
+export async function apiEvidenceHistory(caseKey: string, sourceId: string): Promise<{ case_id: string; source_id: string; versions: EvidenceIntegrityInfo[] }> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/evidence/${encodeURIComponent(sourceId)}/history`);
+}
+
+export async function apiVerifyIntegrity(caseKey: string): Promise<{
+  case_id: string;
+  chain_status: string;
+  chain_valid: boolean;
+  blocks: number;
+  evidence_checked: number;
+  evidence_verified: number;
+  mismatches: unknown[];
+}> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/verify`, { method: "POST" });
+}
+
+export async function apiVerifyEvidence(caseKey: string, sourceId: string): Promise<RecordVerification> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/verify/evidence/${encodeURIComponent(sourceId)}`, { method: "POST" });
+}
+
+export async function apiVerifyRecord(caseKey: string, sourceId: string, recordId: string): Promise<RecordVerification> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/verify/record/${encodeURIComponent(sourceId)}/${encodeURIComponent(recordId)}`, { method: "POST" });
+}
+
+export async function apiVerifyReport(caseKey: string, reportId: string): Promise<RecordVerification> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/verify/report/${encodeURIComponent(reportId)}`, { method: "POST" });
+}
+
+export async function apiVerifyIntelligence(caseKey: string): Promise<RecordVerification> {
+  return request(`/api/v1/integrity/${encodeURIComponent(caseKey)}/verify/intelligence`, { method: "POST" });
+}
+
 export async function apiMaterializeGraph(): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>("/api/v1/graph/materialize", { method: "POST" });
 }

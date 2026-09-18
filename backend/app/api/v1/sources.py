@@ -39,9 +39,43 @@ async def upload_source(
 ) -> SourceUploadResult:
     content = await file.read()
     result = await SourceService(session).upload(case_key, source_type, file.filename, content, source_id)
-    await _audit(session, user, "source_uploaded", source_id or "", {"case_key": case_key, "filename": file.filename, "format": result.format})
+    case_id = await _resolve_case_id(session, case_key)
+    integrity_status = await _register_evidence_integrity(session, case_id, file.filename,
+                                                          source_type, result.source_id,
+                                                          result.evidence_hash or "", user.id)
+    await _audit(session, user, "source_uploaded", result.source_id, {
+        "case_key": case_key, "filename": file.filename, "format": result.format,
+        "evidence_hash": result.evidence_hash, "integrity_status": integrity_status,
+    })
     await session.commit()
+    result.integrity_status = integrity_status
     return result
+
+
+async def _register_evidence_integrity(session, case_id: int, filename: str, source_type: str,
+                                       source_id: str, evidence_hash: str, actor_id: int) -> str:
+    """Compute + register the source's integrity fingerprint; returns status."""
+    from app.blockchain.hashes import canonical_evidence_payload, hash_evidence_payload
+    from app.blockchain.service import BlockchainIntegrityService
+    from app.repositories.source_repository import SourceRepository
+
+    try:
+        source = await SourceRepository(session).list_by_case(case_id)
+        row = next((s for s in source if s.source_id == source_id), None)
+        meta = row.metadata_json or {} if row else {}
+        records = [r for r in (meta.get("records") or []) if isinstance(r, dict)]
+        content_hash = hash_evidence_payload(canonical_evidence_payload(
+            case_id=case_id, source_id=source_id, source_type=source_type,
+            filename=filename, records=records, text=str(meta.get("text") or ""),
+        ))
+        registered = await BlockchainIntegrityService(session).register_evidence(
+            case_id=case_id, source_id=source_id, source_type=source_type,
+            filename=filename, evidence_hash=evidence_hash, content_hash=content_hash,
+            actor_id=actor_id,
+        )
+        return registered.get("status", "REGISTERED")
+    except Exception:  # noqa: BLE001 - integrity failure must not break upload
+        return "LEDGER_UNAVAILABLE"
 
 
 @router.post(
@@ -114,12 +148,28 @@ async def process_source(
         "graph_edges": graph_summary["edges"],
         "extraction_provider": result["metrics"].get("extraction_provider", "deterministic"),
     })
+    # Register processed records as a batched integrity event (Merkle root).
+    try:
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.source_repository import SourceRepository
+        rows = await SourceRepository(session).list_by_case(case_id)
+        source_row = next((s for s in rows if s.source_id == source_id), None)
+        records = [r for r in (source_row.metadata_json or {}).get("records", []) if isinstance(r, dict)]
+        batch = await BlockchainIntegrityService(session).register_processed_batch(
+            case_id=case_id, source_id=source_id, source_type=source.source_type or "OTHER",
+            records=records, actor_id=user.id,
+            extraction={"entities": result["metrics"].get("entities_persisted", 0),
+                        "relationships": result["metrics"].get("relationships_persisted", 0)},
+        )
+    except Exception:  # noqa: BLE001 - integrity failure must not break processing
+        batch = {"merkle_root": None}
     await session.commit()
     metrics = {
         **result["metrics"],
         "graph_refreshed": True,
         "graph_entities": graph_summary["entities"],
         "graph_edges": graph_summary["edges"],
+        "merkle_root": batch.get("merkle_root"),
     }
     return SourceProcessResult(**{**result, "metrics": metrics})
 

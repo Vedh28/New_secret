@@ -34,8 +34,14 @@ class CaseIntelligenceService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def build(self, case_id: int, cache=None) -> dict[str, Any]:
-        """Load persisted case data + analyst decisions and compute the snapshot."""
+    async def build(self, case_id: int, cache=None, register_integrity: bool = True,
+                    actor_id: int | None = None) -> dict[str, Any]:
+        """Load persisted case data + analyst decisions and compute the snapshot.
+
+        When `register_integrity` is true and the snapshot is freshly computed,
+        an INTEGRITY SNAPSHOT event is enqueued (outbox) — never blocking the
+        intelligence pipeline and never recomputing it.
+        """
         if cache is not None and cache.get(case_id):
             return cache[case_id]
 
@@ -43,9 +49,40 @@ class CaseIntelligenceService:
         decisions = await self._load_decisions(case_id)
         result = compute_from_data(case_id, data, decisions)
 
+        if register_integrity:
+            await self._register_snapshot_integrity(case_id, result, actor_id)
+
         if cache is not None:
             cache[case_id] = result
         return result
+
+    async def _register_snapshot_integrity(self, case_id: int, result: dict,
+                                           actor_id: int | None) -> None:
+        """Enqueue an intelligence snapshot integrity event (best-effort).
+
+        Blockchain availability must never affect investigation analytics, so
+        any failure here is swallowed after leaving a retryable PENDING signal.
+        """
+        try:
+            from app.blockchain.service import BlockchainIntegrityService
+            await BlockchainIntegrityService(self._session).enqueue(
+                case_id=case_id,
+                event_type="INTELLIGENCE_SNAPSHOT",
+                entity_type="case",
+                entity_id=str(case_id),
+                payload={
+                    "event_type": "INTELLIGENCE_SNAPSHOT",
+                    "case_id": str(case_id),
+                    "engine": "CaseIntelligenceService",
+                    "engine_version": "1.x",
+                    "snapshot_hash": _snapshot_fingerprint(result),
+                    "created_at": _now_iso(),
+                    "actor_id": str(actor_id or ""),
+                },
+                actor_id=actor_id,
+            )
+        except Exception:  # noqa: BLE001 - integrity layer must never block analytics
+            pass
 
     async def _load_decisions(self, case_id: int) -> dict[str, dict]:
         """Analyst decisions keyed by canonical '<->' sorted pair."""
@@ -211,3 +248,14 @@ def _build_recommendations(data, entity_priorities, entity_gains, links, link_pr
 
 def _d(dataclass_obj) -> dict:
     return asdict(dataclass_obj)
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _snapshot_fingerprint(result: dict) -> str:
+    """Deterministic metrics-only fingerprint for a canonical snapshot."""
+    from app.blockchain.hashes import hash_intelligence_snapshot
+    return hash_intelligence_snapshot(result)

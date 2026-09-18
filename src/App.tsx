@@ -20,6 +20,7 @@ import { TransactionsPage } from "./pages/Transactions";
 import { AssistantPage } from "./pages/AssistantPage";
 import { SimulationPage } from "./pages/SimulationPage";
 import { AuditPage } from "./pages/AuditPage";
+import { EvidenceIntegrityPage } from "./pages/EvidenceIntegrityPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
 const pages: Record<Exclude<Section, "login">, React.JSX.Element> = {
@@ -37,7 +38,8 @@ const pages: Record<Exclude<Section, "login">, React.JSX.Element> = {
   settings: <SettingsPage />,
   assistant: <AssistantPage />,
   simulation: <SimulationPage />,
-  audit: <AuditPage />
+  audit: <AuditPage />,
+  integrity: <EvidenceIntegrityPage />
 };
 
 export function App() {

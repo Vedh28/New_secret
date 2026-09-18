@@ -54,20 +54,24 @@ async def _resolve_case_id(session, case_key: str) -> int:
 @router.get("/{case_key}/intelligence", summary="Full unified case intelligence")
 async def get_intelligence(case_key: str, session: DbSession, _user: CurrentUser) -> dict:
     case_id = await _resolve_case_id(session, case_key)
-    return await CaseIntelligenceService(session).build(case_id, cache=_cache)
+    result = await CaseIntelligenceService(session).build(case_id, cache=_cache)
+    # A freshly computed snapshot enqueues an INTEGRITY SNAPSHOT outbox event;
+    # persist it so the ledger can confirm it (no-op when the cache already had it).
+    await session.commit()
+    return result
 
 
 @router.get("/{case_key}/hidden-links", summary="Potential / hidden link discovery")
 async def hidden_links(case_key: str, session: DbSession, _user: CurrentUser) -> list[dict]:
     case_id = await _resolve_case_id(session, case_key)
-    result = await CaseIntelligenceService(session).build(case_id, cache=_cache)
+    result = await CaseIntelligenceService(session).build(case_id, cache=_cache, register_integrity=False)
     return result["potential_links"]  # already serialized by the unified service
 
 
 @router.get("/{case_key}/network-dna", summary="Network analytical fingerprint")
 async def network_dna(case_key: str, session: DbSession, _user: CurrentUser) -> dict:
     case_id = await _resolve_case_id(session, case_key)
-    result = await CaseIntelligenceService(session).build(case_id, cache=_cache)
+    result = await CaseIntelligenceService(session).build(case_id, cache=_cache, register_integrity=False)
     return result["network_dna"]
 
 
@@ -178,6 +182,15 @@ async def record_decision(
             "evidence_ids": payload.evidence_ids,
         },
     )
+    # Register the analyst decision as a blockchain integrity event (best-effort).
+    try:
+        from app.blockchain.service import BlockchainIntegrityService
+        await BlockchainIntegrityService(session).record_analyst_decision(
+            case_id=case_id, entity_a=a, entity_b=b, decision=payload.decision,
+            evidence_ids=payload.evidence_ids, notes=payload.notes, actor_id=user.id,
+        )
+    except Exception:  # noqa: BLE001 - integrity failure must not break the decision
+        pass
     invalidate_case_cache(case_id)
     await session.commit()
     await session.refresh(decision)

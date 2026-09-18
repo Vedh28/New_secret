@@ -131,6 +131,7 @@ class SourceService:
             record_count=len(parsed.records),
             quality=parsed.quality,
             error=parsed.error,
+            evidence_hash=digest,
         )
 
     async def process(self, case_key: str, source_id: str) -> dict:

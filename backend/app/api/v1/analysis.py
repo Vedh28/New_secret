@@ -95,9 +95,15 @@ async def assistant(
         ) from exc
 
     from app.services.structured_assistant import StructuredAssistant, case_data_from_intel
+    integrity = None
+    try:
+        from app.blockchain.service import BlockchainIntegrityService
+        integrity = await BlockchainIntegrityService(session).case_summary(case.id)
+    except Exception:  # noqa: BLE001 - assistant still answers without integrity context
+        integrity = None
     structured = await StructuredAssistant(session, store).answer(
         payload.question, case_key=payload.case_key,
-        intel=intel, case_data=case_data_from_intel(intel),
+        intel=intel, case_data=case_data_from_intel(intel), integrity=integrity,
     )
     try:
         from app.services.audit_service import AuditService

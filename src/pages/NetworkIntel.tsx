@@ -7,6 +7,7 @@ import { useBackendStore } from "../store/backend";
 import { apiRecordLinkDecision } from "../services/api";
 import { useCaseIntelligence } from "../hooks/useCaseIntelligence";
 import { useCaseGraph } from "../hooks/useCaseGraph";
+import { useIntegritySummary } from "../hooks/useIntegritySummary";
 import { useCaseSelection } from "../services/useCaseSelection";
 
 /**
@@ -24,6 +25,7 @@ export function NetworkIntel() {
   const [refreshKey, setRefreshKey] = useState(0);
   const { intel } = useCaseIntelligence(caseKey, refreshKey);
   const { graph, loading: graphLoading, error: graphError } = useCaseGraph(caseKey, refreshKey);
+  const { summary: integrity } = useIntegritySummary(caseKey, online && Boolean(caseKey));
 
   const decide = async (link: { source: string; target: string }, decision: "CONFIRM" | "REJECT" | "DEFER") => {
     if (!online || !caseKey) return;
@@ -121,6 +123,17 @@ export function NetworkIntel() {
           </HudCard>
           {intel && <PriorityPanel title="Priority targets" items={intel.entity_priorities} />}
           {intel && <TemporalChangesList changes={intel.temporal_changes} />}
+          {integrity && (
+            <HudCard label="Evidence integrity" title="Ledger status">
+              <div className="hud-network-telemetry">
+                <div><span>Chain</span><strong>{integrity.chain_status}</strong></div>
+                <div><span>Sources registered</span><strong>{integrity.evidence_registered}</strong></div>
+                <div><span>Verified</span><strong>{integrity.evidence_verified}</strong></div>
+                <div><span>Mismatches</span><strong>{integrity.mismatches}</strong></div>
+              </div>
+              <div className="meta" style={{ marginTop: 8 }}>Cryptographic integrity is verified against registered hashes; it does not prove a relationship is true.</div>
+            </HudCard>
+          )}
           {intel && <PotentialLinksList links={intel.potential_links} decisions={intel.link_decisions} onDecision={online ? decide : undefined} />}
           {intel && <RecommendationList recs={intel.recommendations} />}
         </div>

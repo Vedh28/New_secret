@@ -47,3 +47,5 @@ class SourceUploadResult(BaseModel):
     record_count: int
     quality: dict = Field(default_factory=dict)
     error: str | None = None
+    evidence_hash: str | None = None          # SHA-256 of uploaded bytes
+    integrity_status: str | None = None       # REGISTERED / PENDING / LEDGER_UNAVAILABLE

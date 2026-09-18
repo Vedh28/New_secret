@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 import { useAppStore } from "../store";
 import { useBackendStore } from "../store/backend";
 import { Section } from "../types";
-import { Bell, Building2, ChevronDown, FileText, MapPin, MessageSquare, Play, Radar, ScrollText, Settings, Shield, Sparkles, TimerReset, Users, Upload } from "lucide-react";
+import { Bell, Building2, ChevronDown, FileText, Fingerprint, MapPin, MessageSquare, Play, Radar, ScrollText, Settings, Shield, Sparkles, TimerReset, Users, Upload } from "lucide-react";
 
 type NavGroup = "OPERATIONS" | "ANALYZE" | "INTELLIGENCE" | "OUTPUT" | "ASSISTANT";
 
@@ -17,6 +17,7 @@ const items: { id: Exclude<Section, "login">; label: string; icon: React.ReactNo
   { id: "transactions", label: "Transactions", icon: <MessageSquare size={14} />, group: "ANALYZE" },
   { id: "communications", label: "Communications", icon: <Users size={14} />, group: "ANALYZE" },
   { id: "alerts", label: "Alerts", icon: <Bell size={14} />, group: "INTELLIGENCE" },
+  { id: "integrity", label: "Evidence Integrity", icon: <Fingerprint size={14} />, group: "INTELLIGENCE" },
   { id: "simulation", label: "Simulation", icon: <Play size={14} />, group: "INTELLIGENCE" },
   { id: "reports", label: "Reports", icon: <FileText size={14} />, group: "OUTPUT" },
   { id: "audit", label: "Audit", icon: <ScrollText size={14} />, group: "OUTPUT" },
