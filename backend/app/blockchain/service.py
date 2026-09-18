@@ -20,7 +20,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.blockchain import hashes, merkle
@@ -105,7 +104,8 @@ class BlockchainIntegrityService:
         async with acquire_case_flush_lock(self._session, case_id):
             # Re-read pending rows AFTER acquiring the lock so we never build on
             # stale state another worker may have already flushed.
-            pending = await IntegrityOutboxRepository(self._session).pending_for_case(case_id, limit=max_events)
+            pending = await IntegrityOutboxRepository(self._session).pending_for_case(
+                case_id, limit=max_events, max_attempts=MAX_ATTEMPTS)
             if not pending:
                 return []
 
@@ -192,48 +192,45 @@ class BlockchainIntegrityService:
         """
         case_id = _normalize_case(case_id)
         repo = EvidenceIntegrityRepository(self._session)
-        latest = await repo.latest_for_source(case_id, source_id)
-        if latest is not None and latest.content_hash == content_hash:
-            return self._evidence_read(latest)
+        from app.blockchain.locking import acquire_case_flush_lock
 
-        version = (latest.version + 1) if latest is not None else 1
-        event_type = "EVIDENCE_VERSION_CREATED" if latest is not None else "EVIDENCE_REGISTERED"
-        payload = {
-            "event_type": event_type,
-            "case_id": str(case_id),
-            "source_id": str(source_id),
-            "evidence_hash": str(evidence_hash),
-            "content_hash": str(content_hash),
-            "hash_algorithm": "SHA-256",
-            "source_type": str(source_type or ""),
-            "filename_hash": hash_text(filename),
-            "version": version,
-            "actor_id": str(actor_id or ""),
-        }
+        async with acquire_case_flush_lock(self._session, case_id):
+            # Serialized per case: version allocation + insert cannot race with
+            # a same-case concurrent registration, so the unique constraint is
+            # the backstop rather than a normal exception path.
+            latest = await repo.latest_for_source(case_id, source_id)
+            if latest is not None and latest.content_hash == content_hash:
+                return self._evidence_read(latest)
 
-        try:
+            version = (latest.version + 1) if latest is not None else 1
+            event_type = "EVIDENCE_VERSION_CREATED" if latest is not None else "EVIDENCE_REGISTERED"
+            payload = {
+                "event_type": event_type,
+                "case_id": str(case_id),
+                "source_id": str(source_id),
+                "evidence_hash": str(evidence_hash),
+                "content_hash": str(content_hash),
+                "hash_algorithm": "SHA-256",
+                "source_type": str(source_type or ""),
+                "filename_hash": hash_text(filename),
+                "version": version,
+                "actor_id": str(actor_id or ""),
+            }
+
             row = await repo.create(
                 case_id=case_id, source_id=source_id, evidence_hash=evidence_hash,
                 content_hash=content_hash, hash_algorithm="SHA-256", version=version,
                 status="REGISTERED", actor_id=actor_id,
             )
-        except IntegrityError:
-            # Concurrent registration of the same (case, source, version)
-            # already committed: reuse the deterministic winner.
-            logger.info("evidence version race case=%s source=%s version=%d", case_id, source_id, version)
-            row = await repo.latest_for_source(case_id, source_id)
-            if row is None:
-                raise
+            outcome = await self._append_and_link(
+                case_id=case_id, event_type=payload["event_type"], entity_type="source",
+                entity_id=source_id, payload=payload, actor_id=actor_id,
+            )
+            if outcome.get("transaction_id"):
+                row.transaction_id = outcome["transaction_id"]
+                row.block_index = outcome["block_index"]
+                await repo.save(row)
             return self._evidence_read(row)
-        outcome = await self._append_and_link(
-            case_id=case_id, event_type=payload["event_type"], entity_type="source",
-            entity_id=source_id, payload=payload, actor_id=actor_id,
-        )
-        if outcome.get("transaction_id"):
-            row.transaction_id = outcome["transaction_id"]
-            row.block_index = outcome["block_index"]
-            await repo.save(row)
-        return self._evidence_read(row)
 
     def _evidence_read(self, row, confirm: bool = False) -> dict:
         status = "PENDING" if (row.transaction_id is None and not confirm) else row.status
@@ -350,7 +347,9 @@ class BlockchainIntegrityService:
             confirmed = await self.flush_pending(case_id)
             transaction_id = confirmed[0]["transaction_id"] if confirmed else transaction_id
             block_index = confirmed[0]["block_index"] if confirmed else None
-        return {**payload, "duplicate": dedupe["state"] == "confirmed",
+        return {**payload,
+                "duplicate": dedupe["state"] in ("confirmed", "failed_exhausted"),
+                "exhausted": dedupe["state"] == "failed_exhausted",
                 "transaction_id": transaction_id, "block_index": block_index}
 
     # ------------------------------------------------------------------
@@ -364,7 +363,8 @@ class BlockchainIntegrityService:
         for e in events:
             if e.event_type == event_type and e.entity_id == entity_id and e.payload_hash == payload_hash:
                 return {"transaction_id": e.transaction_id, "block_index": e.block_index}
-        pending = await IntegrityOutboxRepository(self._session).pending_for_case(case_id, limit=500)
+        pending = await IntegrityOutboxRepository(self._session).pending_for_case(
+            case_id, limit=500, max_attempts=MAX_ATTEMPTS)
         for outbox in pending:
             if outbox.event_type == event_type and outbox.entity_id == entity_id \
                     and outbox.payload_hash == payload_hash:
@@ -395,45 +395,51 @@ class BlockchainIntegrityService:
                              payload: dict, actor_id: int | None) -> dict:
         """Atomically create/reuse one outbox identity.
 
-        Returns {"state": created|retried|reused_pending|confirmed, "outbox",
-                 "transaction_id"}. The unique index on dedupe_key makes
-        concurrent create races collapse onto a single row.
+        Runs under the per-case flush lock so competing workers serialize their
+        check-then-insert (no IntegrityError race in normal operation). The
+        unique index on dedupe_key remains as the database-level backstop.
+
+        Returns {"state": created|retried|reused_pending|confirmed|
+                 failed_exhausted, "outbox", "transaction_id"}.
         """
         case_id = _normalize_case(case_id)
         repo = IntegrityOutboxRepository(self._session)
-        existing = await repo.get_by_dedupe_key(case_id, dedupe_key)
-        if existing is not None:
-            if existing.status == "CONFIRMED":
-                return {"state": "confirmed", "outbox": existing,
-                        "transaction_id": existing.ledger_transaction_id}
-            if existing.status == "PENDING":
-                return {"state": "reused_pending", "outbox": existing,
-                        "transaction_id": existing.ledger_transaction_id}
-            # FAILED -> retry the SAME identity; never a duplicate event.
-            existing.status = "PENDING"
-            existing.attempts = (existing.attempts or 0) + 1
-            logger.info("integrity outbox retry id=%s event=%s case=%s", existing.id, event_type, case_id)
-            await repo.save(existing)
-            return {"state": "retried", "outbox": existing,
-                    "transaction_id": existing.ledger_transaction_id}
+        from app.blockchain.locking import acquire_case_flush_lock
 
-        try:
-            async with self._session.begin_nested():
-                outbox = await repo.create(
-                    case_id=case_id, event_type=event_type, entity_type=entity_type,
-                    entity_id=entity_id, payload_hash=hash_json(payload),
-                    payload_json=payload, actor_id=actor_id, status="PENDING",
-                    attempts=0, dedupe_key=dedupe_key,
-                )
-            return {"state": "created", "outbox": outbox, "transaction_id": None}
-        except IntegrityError:
-            # A concurrent worker inserted the same identity first: reuse it.
-            logger.info("integrity outbox dedupe race case=%s key=%s", case_id, dedupe_key)
+        async with acquire_case_flush_lock(self._session, case_id):
             existing = await repo.get_by_dedupe_key(case_id, dedupe_key)
-            if existing is None:
-                raise
-            return {"state": "confirmed" if existing.status == "CONFIRMED" else "reused_pending",
-                    "outbox": existing, "transaction_id": existing.ledger_transaction_id}
+            if existing is not None:
+                if existing.status == "CONFIRMED":
+                    return {"state": "confirmed", "outbox": existing,
+                            "transaction_id": existing.ledger_transaction_id}
+                if existing.status == "PENDING":
+                    return {"state": "reused_pending", "outbox": existing,
+                            "transaction_id": existing.ledger_transaction_id}
+                # FAILED -> retry the SAME identity; never a duplicate event.
+                # The retry budget caps implicit re-queues; an exhausted row
+                # stays terminal (explicit manual intervention can requeue it).
+                if (existing.attempts or 0) >= MAX_ATTEMPTS:
+                    logger.warning("integrity outbox retry budget exhausted id=%s event=%s case=%s attempts=%s",
+                                   existing.id, event_type, case_id, existing.attempts)
+                    return {"state": "failed_exhausted", "outbox": existing,
+                            "transaction_id": existing.ledger_transaction_id}
+                existing.status = "PENDING"
+                existing.attempts = (existing.attempts or 0) + 1
+                logger.info("integrity outbox retry id=%s event=%s case=%s", existing.id, event_type, case_id)
+                await repo.save(existing)
+                return {"state": "retried", "outbox": existing,
+                        "transaction_id": existing.ledger_transaction_id}
+
+            # Serialized by the case lock: no same-case writer can be inserting
+            # the same identity concurrently. A conflict now means a non-locked
+            # or cross-case anomaly — surface it rather than guessing.
+            outbox = await repo.create(
+                case_id=case_id, event_type=event_type, entity_type=entity_type,
+                entity_id=entity_id, payload_hash=hash_json(payload),
+                payload_json=payload, actor_id=actor_id, status="PENDING",
+                attempts=0, dedupe_key=dedupe_key,
+            )
+            return {"state": "created", "outbox": outbox, "transaction_id": None}
 
     async def register_intelligence_snapshot(self, *, case_id: str, snapshot: dict,
                                              actor_id: int | None = None) -> dict:
@@ -463,7 +469,8 @@ class BlockchainIntegrityService:
             block_index = confirmed[0]["block_index"] if confirmed else None
         return {
             **payload,
-            "duplicate": dedupe["state"] == "confirmed",
+            "duplicate": dedupe["state"] in ("confirmed", "failed_exhausted"),
+            "exhausted": dedupe["state"] == "failed_exhausted",
             "transaction_id": transaction_id,
             "block_index": block_index,
         }
@@ -493,8 +500,9 @@ class BlockchainIntegrityService:
             payload=payload, actor_id=actor_id,
         )
         return {
-            "duplicate": dedupe["state"] in ("confirmed", "reused_pending"),
+            "duplicate": dedupe["state"] in ("confirmed", "reused_pending", "failed_exhausted"),
             "retried": dedupe["state"] == "retried",
+            "exhausted": dedupe["state"] == "failed_exhausted",
             "snapshot_hash": snapshot_hash,
             "case_id": case_id,
             "transaction_id": dedupe.get("transaction_id"),

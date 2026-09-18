@@ -103,10 +103,20 @@ class IntegrityOutboxRepository(BaseRepository[IntegrityOutbox]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, IntegrityOutbox)
 
-    async def pending_for_case(self, case_id: str, limit: int = 200) -> list[IntegrityOutbox]:
+    async def pending_for_case(self, case_id: str, limit: int = 200,
+                               max_attempts: int = 3) -> list[IntegrityOutbox]:
+        """Retryable outbox rows: PENDING, or FAILED within the retry budget.
+
+        A FAILED row whose attempts reached the retry budget is TERMINAL and
+        is excluded — it must not be re-flushed automatically.
+        """
         stmt = (
             select(IntegrityOutbox)
-            .where(IntegrityOutbox.case_id == case_id, IntegrityOutbox.status.in_(("PENDING", "FAILED")))
+            .where(
+                IntegrityOutbox.case_id == case_id,
+                (IntegrityOutbox.status == "PENDING")
+                | (IntegrityOutbox.status == "FAILED") & (IntegrityOutbox.attempts < max_attempts),
+            )
             .order_by(IntegrityOutbox.id.asc())
             .limit(limit)
         )
