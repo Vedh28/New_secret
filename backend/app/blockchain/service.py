@@ -96,66 +96,75 @@ class BlockchainIntegrityService:
         and returns [] — never raises into the investigation pipeline.
         """
         case_id = _normalize_case(case_id)
-        pending = await IntegrityOutboxRepository(self._session).pending_for_case(case_id, limit=max_events)
-        if not pending:
-            return []
+        # Serialize the WHOLE read -> compute -> append -> confirm section for
+        # this case (transaction-scoped; PostgreSQL advisory lock in production,
+        # SQLite functional lock in tests). The lock is released only when the
+        # caller commits/rolls back the enclosing transaction.
+        from app.blockchain.locking import acquire_case_flush_lock
 
-        latest = await self._store.latest_block(case_id)
-        events: list[dict] = []
-        planned: list[tuple] = []
-        for outbox in pending:
-            tx = _tx_id()
-            ev = {
-                "transaction_id": tx,
-                "event_type": outbox.event_type,
-                "entity_type": outbox.entity_type,
-                "entity_id": outbox.entity_id,
-                "payload_hash": outbox.payload_hash,
-                "payload_json": outbox.payload_json,
-                "actor_id": outbox.actor_id,
-                "hash": outbox.payload_hash,
-            }
-            events.append(ev)
-            planned.append((outbox, tx))
+        async with acquire_case_flush_lock(self._session, case_id):
+            # Re-read pending rows AFTER acquiring the lock so we never build on
+            # stale state another worker may have already flushed.
+            pending = await IntegrityOutboxRepository(self._session).pending_for_case(case_id, limit=max_events)
+            if not pending:
+                return []
 
-        try:
-            block = self._engine.compute_block(previous=latest, case_id=case_id, events=events)
-            await self._store.append_block(block)
-        except Exception as exc:  # noqa: BLE001 - integrity outage must not break case work
-            logger.warning("integrity ledger append failed for case=%s events=%d: %s",
-                           case_id, len(planned), exc)
-            for outbox, _tx in planned:
-                outbox.attempts = (outbox.attempts or 0) + 1
-                outbox.last_error = str(exc)[:500]
-                outbox.status = "FAILED" if outbox.attempts >= MAX_ATTEMPTS else "PENDING"
-                await IntegrityOutboxRepository(self._session).save(outbox)
-            return []
+            latest = await self._store.latest_block(case_id)
+            events: list[dict] = []
+            planned: list[tuple] = []
+            for outbox in pending:
+                tx = _tx_id()
+                ev = {
+                    "transaction_id": tx,
+                    "event_type": outbox.event_type,
+                    "entity_type": outbox.entity_type,
+                    "entity_id": outbox.entity_id,
+                    "payload_hash": outbox.payload_hash,
+                    "payload_json": outbox.payload_json,
+                    "actor_id": outbox.actor_id,
+                    "hash": outbox.payload_hash,
+                }
+                events.append(ev)
+                planned.append((outbox, tx))
 
-        event_repo = LedgerEventRepository(self._session)
-        outbox_repo = IntegrityOutboxRepository(self._session)
-        confirmed: list[dict] = []
-        for outbox, tx in planned:
-            await event_repo.create(
-                transaction_id=tx,
-                case_id=case_id,
-                event_type=outbox.event_type,
-                entity_type=outbox.entity_type,
-                entity_id=outbox.entity_id,
-                payload_hash=outbox.payload_hash,
-                payload_json=outbox.payload_json,
-                actor_id=outbox.actor_id,
-                block_index=block.index,
-                block_hash=block.hash,
-                previous_block_hash=block.previous_hash,
-                status="REGISTERED",
-            )
-            outbox.status = "CONFIRMED"
-            outbox.ledger_transaction_id = tx
-            outbox.processed_at = datetime.now(timezone.utc)
-            outbox.last_error = None  # cleared on a successful retry
-            await outbox_repo.save(outbox)
-            confirmed.append({"outbox_id": outbox.id, "transaction_id": tx, "block_index": block.index})
-        return confirmed
+            try:
+                block = self._engine.compute_block(previous=latest, case_id=case_id, events=events)
+                await self._store.append_block(block)
+            except Exception as exc:  # noqa: BLE001 - integrity outage must not break case work
+                logger.warning("integrity ledger append failed for case=%s events=%d: %s",
+                               case_id, len(planned), exc)
+                for outbox, _tx in planned:
+                    outbox.attempts = (outbox.attempts or 0) + 1
+                    outbox.last_error = str(exc)[:500]
+                    outbox.status = "FAILED" if outbox.attempts >= MAX_ATTEMPTS else "PENDING"
+                    await IntegrityOutboxRepository(self._session).save(outbox)
+                return []
+
+            event_repo = LedgerEventRepository(self._session)
+            outbox_repo = IntegrityOutboxRepository(self._session)
+            confirmed: list[dict] = []
+            for outbox, tx in planned:
+                await event_repo.create(
+                    transaction_id=tx,
+                    case_id=case_id,
+                    event_type=outbox.event_type,
+                    entity_type=outbox.entity_type,
+                    entity_id=outbox.entity_id,
+                    payload_hash=outbox.payload_hash,
+                    payload_json=outbox.payload_json,
+                    actor_id=outbox.actor_id,
+                    block_index=block.index,
+                    block_hash=block.hash,
+                    previous_block_hash=block.previous_hash,
+                    status="REGISTERED",
+                )
+                outbox.status = "CONFIRMED"
+                outbox.ledger_transaction_id = tx
+                outbox.processed_at = datetime.now(timezone.utc)
+                outbox.last_error = None  # cleared on a successful retry
+                await outbox_repo.save(outbox)
+                confirmed.append({"outbox_id": outbox.id, "transaction_id": tx, "block_index": block.index})
+            return confirmed
 
     async def _append_and_link(self, *, case_id: str, event_type: str, entity_type: str | None,
                                entity_id: str | None, payload: dict, actor_id: int | None,
@@ -202,11 +211,20 @@ class BlockchainIntegrityService:
             "actor_id": str(actor_id or ""),
         }
 
-        row = await repo.create(
-            case_id=case_id, source_id=source_id, evidence_hash=evidence_hash,
-            content_hash=content_hash, hash_algorithm="SHA-256", version=version,
-            status="REGISTERED", actor_id=actor_id,
-        )
+        try:
+            row = await repo.create(
+                case_id=case_id, source_id=source_id, evidence_hash=evidence_hash,
+                content_hash=content_hash, hash_algorithm="SHA-256", version=version,
+                status="REGISTERED", actor_id=actor_id,
+            )
+        except IntegrityError:
+            # Concurrent registration of the same (case, source, version)
+            # already committed: reuse the deterministic winner.
+            logger.info("evidence version race case=%s source=%s version=%d", case_id, source_id, version)
+            row = await repo.latest_for_source(case_id, source_id)
+            if row is None:
+                raise
+            return self._evidence_read(row)
         outcome = await self._append_and_link(
             case_id=case_id, event_type=payload["event_type"], entity_type="source",
             entity_id=source_id, payload=payload, actor_id=actor_id,
@@ -318,21 +336,22 @@ class BlockchainIntegrityService:
         )
         payload["event_type"] = "ANALYST_DECISION"
         payload_hash = hash_json(payload)
+        dedupe_key = f"{case_id}::ANALYST_DECISION::{pair}::{payload_hash}"
 
-        # Idempotency: an identical decision for the same pair is not
-        # re-registered (neither as a confirmed event nor as pending work).
-        existing = await self._find_event(case_id, "ANALYST_DECISION", pair, payload_hash)
-        if existing:
-            return {**payload, "duplicate": True, "transaction_id": existing.get("transaction_id"),
-                    "block_index": existing.get("block_index")}
-
-        outcome = await self._append_and_link(
-            case_id=case_id, event_type="ANALYST_DECISION",
-            entity_type="potential_link", entity_id=pair,
-            payload=payload, actor_id=actor_id,
+        # Atomic, DB-unique identity: identical decisions for the same pair
+        # collapse onto ONE logical outbox row / event (no endless duplicates).
+        dedupe = await self._dedupe_outbox(
+            case_id=case_id, dedupe_key=dedupe_key, event_type="ANALYST_DECISION",
+            entity_type="potential_link", entity_id=pair, payload=payload, actor_id=actor_id,
         )
-        return {**payload, "duplicate": False, "transaction_id": outcome.get("transaction_id"),
-                "block_index": outcome.get("block_index")}
+        transaction_id = dedupe.get("transaction_id")
+        block_index = None
+        if dedupe["state"] in ("created", "retried", "reused_pending"):
+            confirmed = await self.flush_pending(case_id)
+            transaction_id = confirmed[0]["transaction_id"] if confirmed else transaction_id
+            block_index = confirmed[0]["block_index"] if confirmed else None
+        return {**payload, "duplicate": dedupe["state"] == "confirmed",
+                "transaction_id": transaction_id, "block_index": block_index}
 
     # ------------------------------------------------------------------
     # Intelligence snapshot integrity (Phase 11 -> Phase 3 idempotent)

@@ -113,8 +113,9 @@ class IntegrityOutbox(Base):
     """Reliable integrity event queue (outbox pattern).
 
     `dedupe_key` carries a deterministic identity for idempotent event types
-    (e.g. INTEGRITY SNAPSHOT). The database-level unique constraint makes
-    concurrent duplicate enqueues safe: one logical event, one outbox row.
+    (e.g. INTEGRITY SNAPSHOT, ANALYST DECISION). The database-level unique
+    constraint makes concurrent duplicate enqueues safe: one logical event, one
+    outbox row.
     """
 
     __tablename__ = "integrity_outbox"
@@ -140,3 +141,23 @@ class IntegrityOutbox(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<IntegrityOutbox {self.event_type} {self.status}>"
+
+
+class IntegrityFlushLock(Base):
+    """SQLite-functional serialization token for case-scoped ledger flushes.
+
+    PostgreSQL uses transactional advisory locks (no row needed). This table is
+    used by the SQLite fallback in `app/blockchain/locking.py` to hold the
+    engine's write lock for the duration of a flush transaction.
+    """
+
+    __tablename__ = "integrity_flush_locks"
+
+    case_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    holder: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<IntegrityFlushLock {self.case_id}>"

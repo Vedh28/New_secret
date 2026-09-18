@@ -12,7 +12,13 @@ from app.models.entity import Entity, EntityRelationship
 from app.models.lead import Lead
 from app.models.source import Source
 from app.models.link_decision import PotentialLinkDecision
-from app.models.integrity import EvidenceIntegrity, IntegrityOutbox, LedgerBlock, LedgerEvent
+from app.models.integrity import (
+    EvidenceIntegrity,
+    IntegrityFlushLock,
+    IntegrityOutbox,
+    LedgerBlock,
+    LedgerEvent,
+)
 from app.models.report import Report
 
 __all__ = [
@@ -37,5 +43,6 @@ __all__ = [
     "LedgerEvent",
     "EvidenceIntegrity",
     "IntegrityOutbox",
+    "IntegrityFlushLock",
     "Report",
 ]
