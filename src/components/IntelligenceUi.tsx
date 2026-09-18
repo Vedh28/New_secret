@@ -24,6 +24,11 @@ export function DnaPanel({ dna }: { dna: NetworkDNA }) {
         { label: "Evidence coverage", value: `${dna.evidence_coverage}%` },
         { label: "Fragmentation", value: dna.fragmentation.toFixed(2) },
       ]} />
+      <div className="meta" style={{ marginTop: 10 }}>
+        <b>How to read this:</b> bridge dependence measures how strongly network connectivity relies on
+        a small number of cross-community entities; evidence coverage shows what fraction of entities
+        carry recorded source references; these are analytical fingerprints, not criminality scores.
+      </div>
     </HudCard>
   );
 }
@@ -70,20 +75,56 @@ export function AnomalyList({ anomalies, compact = false }: { anomalies: Anomaly
   );
 }
 
-export function PotentialLinksList({ links, onClick }: { links: PotentialLink[]; onClick?: (l: PotentialLink) => void }) {
+export function PotentialLinksList({
+  links,
+  decisions,
+  onClick,
+  onDecision,
+}: {
+  links: PotentialLink[];
+  decisions?: Record<string, unknown>;
+  onClick?: (l: PotentialLink) => void;
+  onDecision?: (l: PotentialLink, decision: "CONFIRM" | "REJECT" | "DEFER") => void;
+}) {
   if (!links?.length) return null;
+  const pairKey = (a: string, b: string) => [a, b].sort().join("<->");
   return (
-    <HudCard label="Hidden link discovery" title="Potential relationships">
+    <HudCard label="Hidden link discovery" title="Potential relationships · analyst in control">
       <div className="stack">
-        {links.slice(0, 6).map((l) => (
-          <button key={`${l.source}-${l.target}`} className="entity entity-tight" onClick={() => onClick?.(l)}>
-            <div>
-              <div><b>{l.source}</b> ↔ <b>{l.target}</b></div>
-              <div className="meta">{l.supporting_signals.slice(0, 2).join(" · ")}</div>
+        {links.slice(0, 6).map((l) => {
+          const raw = decisions?.[pairKey(l.source, l.target)];
+          const status = (raw && typeof raw === "object")
+            ? (raw as { new_status?: string })
+            : undefined;
+          const decided = status?.new_status === "ANALYST_CONFIRMED" || status?.new_status === "REJECTED";
+          return (
+            <div key={`${l.source}-${l.target}`} className="entity entity-tight" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <button className="entity" onClick={() => onClick?.(l)} style={{ flex: 1, border: 0, background: "transparent", textAlign: "left", padding: 0, color: "inherit" }}>
+                  <div><b>{l.source}</b> ↔ <b>{l.target}</b></div>
+                  <div className="meta">{l.supporting_signals.slice(0, 2).join(" · ")}</div>
+                  {l.contradictory_signals?.length ? (
+                    <div className="meta">Caveat: {l.contradictory_signals.slice(0, 2).join(" · ")}</div>
+                  ) : null}
+                  {l.evidence_ids?.length ? (
+                    <div className="meta">Evidence: {l.evidence_ids.join(", ")}</div>
+                  ) : null}
+                </button>
+                <div className="risk">{l.score.toFixed(0)}</div>
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                {status?.new_status ? <span className="tag">{status.new_status.replace("_", " ")}</span> : <span className="tag">POTENTIAL</span>}
+                {onDecision && (
+                  <>
+                    <button className="pill" disabled={decided} title="Analyst confirms this potential link" onClick={() => onDecision(l, "CONFIRM")}>CONFIRM</button>
+                    <button className="pill" disabled={decided} title="Analyst rejects this potential link" onClick={() => onDecision(l, "REJECT")}>REJECT</button>
+                    <button className="pill" disabled={decided} title="Defer until more evidence arrives" onClick={() => onDecision(l, "DEFER")}>DEFER</button>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="risk">{l.score.toFixed(0)}</div>
-          </button>
-        ))}
+          );
+        })}
       </div>
     </HudCard>
   );

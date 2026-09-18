@@ -7,32 +7,51 @@ activity bursts. Deterministic; every change carries an explanation.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.intelligence.models import CaseData, RelData, TemporalChange
 
 
 def _parse(value: str) -> datetime | None:
+    """Parse an ISO timestamp, normalizing timezone-aware values to UTC-naive.
+
+    Naive and aware timestamps may coexist across sources; comparing one of
+    each raises TypeError. Normalizing aware -> UTC and dropping tzinfo gives a
+    single comparable clock. Invalid/missing values return None.
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace(" ", "T"))
-    except ValueError:
+        dt = datetime.fromisoformat(str(value).replace(" ", "T"))
+    except (ValueError, TypeError):
         return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def split_at(data: CaseData, boundary: str) -> tuple[set[tuple[str, str, str]], set[tuple[str, str, str]]]:
-    """Return (before, after) sets of (source, target, type) with first_seen below/at boundary."""
+    """Return (before, after) sets of (source, target, type) for the boundary.
+
+    BEFORE: relationship whose first observation is <= boundary.
+    AFTER:  relationship whose first observation is > boundary.
+    Untimed or invalid timestamps fall into neither slice when a boundary is
+    given (their temporal position is unknown, so they must not be reported as
+    new/emerging). With no boundary, everything is BEFORE.
+    """
     cutoff = _parse(boundary)
     before: set[tuple[str, str, str]] = set()
     after: set[tuple[str, str, str]] = set()
     for r in data.relationships:
         seen = _parse(r.first_seen or r.last_seen)
         key = (r.source, r.target, r.rel_type)
-        if cutoff is None or (seen is not None and seen <= cutoff):
+        if cutoff is None:
             before.add(key)
-        if cutoff is not None and (seen is None or seen > cutoff):
-            after.add(key)
+        elif seen is not None:
+            if seen <= cutoff:
+                before.add(key)
+            else:
+                after.add(key)
     return before, after
 
 
@@ -90,8 +109,13 @@ def network_evolution(data: CaseData, boundary: str) -> list[TemporalChange]:
 
 
 def emerging_bridges(data: CaseData, communities: list[list[str]], boundary: str) -> list[TemporalChange]:
-    """Flag nodes that connected new cross-community pairs after `boundary`."""
-    before, _ = split_at(data, boundary)
+    """Flag nodes that connected new cross-community pairs after `boundary`.
+
+    Only relationships observed strictly AFTER the boundary may count; a
+    cross-community edge that existed before the split must never be reported
+    as an emerging bridge.
+    """
+    _, after = split_at(data, boundary)
     comm_of: dict[str, int] = {}
     for i, members in enumerate(communities):
         for m in members:
@@ -99,7 +123,7 @@ def emerging_bridges(data: CaseData, communities: list[list[str]], boundary: str
 
     # count cross-community edges added after boundary per node
     added_after: dict[str, int] = defaultdict(int)
-    for src, tgt, _rtype in after_all(data):
+    for src, tgt, _rtype in after:
         if comm_of.get(src) is not None and comm_of.get(tgt) is not None and comm_of[src] != comm_of[tgt]:
             added_after[src] += 1
             added_after[tgt] += 1
@@ -113,15 +137,12 @@ def emerging_bridges(data: CaseData, communities: list[list[str]], boundary: str
                     source=node,
                     after=float(n),
                     score=min(100.0, 30.0 + n * 20.0),
-                    explanation=f"{node} gained {n} cross-community connection(s), making it a "
-                                f"potential bridge between previously separate groups.",
+                    explanation=f"{node} gained {n} cross-community connection(s) after "
+                                f"{boundary}, making it a potential bridge between previously "
+                                f"separate groups.",
                 )
             )
     return changes
-
-
-def after_all(data: CaseData) -> list[tuple[str, str, str]]:
-    return [(r.source, r.target, r.rel_type) for r in data.relationships if _parse(r.first_seen)]
 
 
 def activity_bursts(relationships: list[RelData], min_count: int = 4) -> list[TemporalChange]:

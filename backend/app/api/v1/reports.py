@@ -20,7 +20,18 @@ async def generate_report(
     store: GraphStoreDep,
     user: CurrentUser,
 ) -> ReportResponse:
-    return await ReportService(session, store, user).generate(payload)
+    report = await ReportService(session, store, user).generate(payload)
+    try:
+        from app.services.audit_service import AuditService
+        await AuditService(session).record(
+            user, "report_generated", object_type="report", object_id=report.id,
+            result={"report_type": report.report_type,
+                    "case_number": getattr(payload, "case_number", None) or ""},
+        )
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        pass
+    return report
 
 
 @router.get(

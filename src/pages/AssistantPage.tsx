@@ -178,7 +178,7 @@ function demoAssistant(question: string): AssistantResponse {
     type: isConnections ? "relationships" : isAnomaly ? "anomalies" : "case_overview",
     query: question,
     summary,
-    key_findings: [{ label: "Network", detail: "3 communities connected through a small number of bridge entities." }, { label: "Coverage", detail: "78% evidence coverage; independent confirmation is still required." }],
+    key_findings: [{ label: "Network", detail: "3 communities connected through a small number of bridge entities." }, { label: "Coverage", detail: "Synthetic demo case: every entity has a recorded source reference; independent confirmation is still required." }],
     entities: [{ id: "P-0421", type: "Person", name: "P-0421", priority: 88 }, { id: "N-4821", type: "Phone", name: "N-4821", priority: 73 }],
     relationships,
     anomalies,

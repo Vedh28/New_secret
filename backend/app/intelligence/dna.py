@@ -53,6 +53,31 @@ def _activity_level(counts: list[float], threshold: float) -> str:
     return "LOW"
 
 
+def compute_evidence_coverage(data: CaseData) -> float:
+    """Evidence coverage for a case snapshot (0..100%).
+
+    An entity is fully covered (1.0) when at least one persisted evidence
+    record references it; it is weakly covered (0.5) when it only carries a
+    source reference in its own provenance; uncovered is 0. The score is the
+    mean across all case entities — never an artifact of graph size (`n/n`).
+    0% when every entity is unverified.
+    """
+    total = len(data.entities)
+    if total == 0:
+        return 0.0
+    referenced: set[str] = set()
+    for e in data.evidence:
+        referenced.update(e.entity_ids)
+
+    score = 0.0
+    for ent in data.entities:
+        if ent.id in referenced:
+            score += 1.0
+        elif ent.source_ids:
+            score += 0.5
+    return round(score * 100.0 / total, 1)
+
+
 def compute_dna(graph: nx.Graph, data: CaseData | None = None) -> NetworkDNA:
     """Compute a DNA fingerprint from a NetworkX graph (+ optional raw case data)."""
     n = graph.number_of_nodes()
@@ -72,7 +97,7 @@ def compute_dna(graph: nx.Graph, data: CaseData | None = None) -> NetworkDNA:
 
     comm_activity, tx_activity = ("LOW", "LOW")
     temporal_volatility = 0.0
-    evidence_coverage = float(n) / float(n) if n else 0.0  # default; refined by caller
+    evidence_coverage = 0.0
     tx_anomaly = "LOW"
     if data is not None:
         comm_counts = [r.count for r in data.relationships if r.rel_type in _COMM_REL]
@@ -85,6 +110,7 @@ def compute_dna(graph: nx.Graph, data: CaseData | None = None) -> NetworkDNA:
             tx_anomaly = "HIGH"
         elif tx_counts:
             tx_anomaly = "MEDIUM"
+        evidence_coverage = compute_evidence_coverage(data)
 
     fragmentation = 1.0 - (1.0 / len(components)) if components else 0.0
 
@@ -98,7 +124,7 @@ def compute_dna(graph: nx.Graph, data: CaseData | None = None) -> NetworkDNA:
         temporal_volatility=temporal_volatility,
         communication_activity=comm_activity,
         transaction_anomaly=tx_anomaly,
-        evidence_coverage=round(evidence_coverage * 100.0, 1),
+        evidence_coverage=round(evidence_coverage, 1),
         fragmentation=round(fragmentation, 3),
     )
 

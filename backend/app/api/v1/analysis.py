@@ -58,7 +58,7 @@ async def assistant(
     session: DbSession,
     _user: CurrentUser,
 ) -> AssistantResponse:
-    structured = await StructuredAssistant(session, store).answer(payload.question)
+    structured = await StructuredAssistant(session, store).answer(payload.question, case_key=payload.case_key)
     if payload.case_key:
         # When a case is requested, pull live case intelligence to enrich the answer.
         try:

@@ -5,15 +5,25 @@ import { apiListCases, type CaseRead } from "./api";
 import { prototypeCases } from "../data/prototypeCase";
 
 /**
- * Shared "select a case" state for analysis pages. Falls back to null when the
- * backend is offline so pages can render their demo/synthetic view.
+ * Shared "select a case" state for analysis pages.
+ *
+ * The selected case is stored in the global map store (`selectedCaseId`), so a
+ * case chosen on any page (Command Center, Intake, Network, ...) propagates
+ * everywhere else. Falls back to prototype/synthetic cases when the backend is
+ * offline.
  */
 export function useCaseSelection() {
   const backend = useBackendStore((s) => s.mode);
+  const selectedCaseId = useMapStore((s) => s.selectedCaseId);
   const [cases, setCases] = useState<CaseRead[]>([]);
-  const [caseKey, setCaseKey] = useState<string>("");
 
-  const reload = useCallback(() => {
+  const caseKey = selectedCaseId ?? "";
+  const setCaseKey = useCallback((key: string) => {
+    useMapStore.getState().selectCase(key || null);
+  }, []);
+
+  const reload = useCallback(async () => {
+    const current = useMapStore.getState().selectedCaseId;
     if (backend !== "backend") {
       setCases(prototypeCases.map((item, index) => ({
         id: index + 1,
@@ -25,13 +35,14 @@ export function useCaseSelection() {
         created_at: item.lastActivity,
         updated_at: item.lastActivity,
       })));
-      setCaseKey((prev) => prev || prototypeCases[0]?.caseId || "");
+      useMapStore.getState().selectCase(current || prototypeCases[0]?.caseId || null);
       return;
     }
     apiListCases({ limit: 100 })
       .then((res) => {
         setCases(res.items);
-        setCaseKey((prev) => prev || res.items[0]?.case_number || "");
+        const stillValid = current && res.items.some((c) => c.case_number === current);
+        useMapStore.getState().selectCase(stillValid ? current : (res.items[0]?.case_number ?? null));
       })
       .catch(() => setCases([]));
   }, [backend]);
@@ -39,12 +50,6 @@ export function useCaseSelection() {
   useEffect(() => {
     reload();
   }, [reload]);
-
-  // Keep the investigation map in sync: when any page settles on a case, the
-  // map highlights that case's locations on return to the Command Center.
-  useEffect(() => {
-    if (caseKey) useMapStore.getState().selectCase(caseKey);
-  }, [caseKey]);
 
   return { backend, cases, caseKey, setCaseKey, reload };
 }

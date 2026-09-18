@@ -18,14 +18,14 @@ const INDIA_CENTER: [number, number] = [78.9629, 20.5937];
 const INDIA_BOUNDS: [[number, number], [number, number]] = [[67, 6.5], [98, 37.2]];
 const OPENFREEMAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const OPENFREEMAP_PLANET = "https://tiles.openfreemap.org/planet";
-const BUILDING_HEIGHT = [
+const BUILDING_HEIGHT: maplibregl.ExpressionSpecification = [
   "coalesce",
   ["to-number", ["get", "render_height"]],
   ["to-number", ["get", "height"]],
   ["*", ["to-number", ["get", "building:levels"]], 3],
   0,
 ];
-const BUILDING_BASE = [
+const BUILDING_BASE: maplibregl.ExpressionSpecification = [
   "coalesce",
   ["to-number", ["get", "render_min_height"]],
   ["to-number", ["get", "min_height"]],
@@ -78,11 +78,11 @@ function curvedRoute(points: number[][]): number[][] {
   }
   return coordinates;
 }
-const BUILDING_COLOR = [
+const BUILDING_COLOR: maplibregl.ExpressionSpecification = [
   "interpolate", ["linear"], BUILDING_HEIGHT,
   0, "#131d3d", 30, "#183052", 90, "#1d4566", 220, "#2a6f98", 420, "#62a8d4",
 ];
-const BUILDING_OPACITY = [
+const BUILDING_OPACITY: maplibregl.ExpressionSpecification = [
   "interpolate", ["linear"], ["zoom"],
   13, 0.2, 14, 0.34, 15, 0.5, 17, 0.68, 20, 0.78,
 ];
@@ -125,6 +125,12 @@ function mapPoint(feature: GeoJSON.Feature, map: MapLibreMap, event: MapMouseEve
   const rect = map.getContainer().getBoundingClientRect();
   const point = map.project(event.lngLat);
   return { id, x: rect.left + point.x, y: rect.top + point.y };
+}
+
+function eventFeatures(event: MapMouseEvent): MapGeoJSONFeature[] {
+  // The installed maplibre type omits .features on MapMouseEvent although the
+  // runtime populates it for sourced layers; read it defensively.
+  return (event as unknown as { features?: MapGeoJSONFeature[] }).features ?? [];
 }
 
 class PitchControl implements IControl {
@@ -318,7 +324,9 @@ function addMapLayers(map: MapLibreMap) {
 function setPaint(map: MapLibreMap, layerId: string, property: string, value: unknown) {
   if (!map.getLayer(layerId)) return;
   try {
-    map.setPaintProperty(layerId, property, value as never);
+    // The setter's typed keys lag maplibre's runtime paint properties; we pass
+    // through the raw string key exactly as the provider expects.
+    (map as unknown as { setPaintProperty: (id: string, p: string, v: unknown) => void }).setPaintProperty(layerId, property, value);
   } catch (error) {
     // Some provider layers omit optional paint properties; keep those layers intact.
     console.warn(`[map-style] Could not recolor ${layerId}.${property}`, error);
@@ -329,7 +337,7 @@ function recolorMapStyle(map: MapLibreMap) {
   const layers = map.getStyle().layers ?? [];
   layers.forEach((layer) => {
     const id = layer.id.toLowerCase();
-    const sourceLayer = String(layer["source-layer"] ?? "").toLowerCase();
+    const sourceLayer = String((layer as { "source-layer"?: string })["source-layer"] ?? "").toLowerCase();
 
     if (layer.type === "background") setPaint(map, layer.id, "background-color", MAP_COLORS.background);
     // Keep the operational map vector-only; provider raster/hillshade layers
@@ -456,10 +464,11 @@ function buildData(markers: CaseMarker[], showCases: boolean, showLocations: boo
 
 function fitAll(map: MapLibreMap, markers: CaseMarker[]) {
   const locations = markers.flatMap((marker) => marker.locations);
-  if (!locations.length) { map.fitBounds(INDIA_BOUNDS, { padding: [120, 120], pitch: 58, bearing: -14, duration: 1200, essential: true }); return; }
+  const cameraPadding = { top: 120, bottom: 120, left: 120, right: 120 };
+  if (!locations.length) { map.fitBounds(INDIA_BOUNDS, { padding: cameraPadding, pitch: 58, bearing: -14, duration: 1200, essential: true }); return; }
   const bounds = new maplibregl.LngLatBounds();
   locations.forEach((location) => bounds.extend([location.longitude, location.latitude]));
-  map.fitBounds(bounds, { padding: [120, 120], maxZoom: 13, pitch: 58, bearing: -14, duration: 1200, essential: true });
+  map.fitBounds(bounds, { padding: cameraPadding, maxZoom: 13, pitch: 58, bearing: -14, duration: 1200, essential: true });
 }
 
 function offsetCoordinate(target: [number, number], bearing: number, distanceMeters: number): [number, number] {
@@ -608,7 +617,7 @@ export function InvestigationMap() {
 
   useEffect(() => {
     if (!hostRef.current) return;
-    const map = new maplibregl.Map({ container: hostRef.current, style: OPENFREEMAP_STYLE, projection: { type: "globe" }, center: INDIA_CENTER, zoom: 3, pitch: 60, bearing: -14, maxPitch: 78, maxZoom: 22, minZoom: 2, attributionControl: true, pitchWithRotate: true, dragRotate: true, canvasContextAttributes: { antialias: true } });
+    const map = new maplibregl.Map({ container: hostRef.current, style: OPENFREEMAP_STYLE, projection: { type: "globe" }, center: INDIA_CENTER, zoom: 3, pitch: 60, bearing: -14, maxPitch: 78, maxZoom: 22, minZoom: 2, pitchWithRotate: true, dragRotate: true, canvasContextAttributes: { antialias: true } } as unknown as maplibregl.MapOptions);
     mapRef.current = map;
     const threeOverlay = createThreeIntelOverlay();
     threeOverlayRef.current = threeOverlay;
@@ -688,8 +697,8 @@ export function InvestigationMap() {
         map.setProjection({ type: "globe" });
       }
       // Older MapLibre builds do not expose fog; keep the globe usable there.
-      if (typeof map.setFog === "function") {
-        map.setFog({
+      if (typeof (map as unknown as { setFog?: (f: unknown) => void }).setFog === "function") {
+        (map as unknown as { setFog: (f: unknown) => void }).setFog({
           "range": [2, 9],
           "color": "#0d1838",
           "high-color": "#102a4a",
@@ -713,7 +722,7 @@ export function InvestigationMap() {
       syncCinematicZoom();
     };
     const onLocationClick = (event: MapMouseEvent) => {
-      const feature = event.features?.[0] as MapGeoJSONFeature | undefined;
+      const feature = eventFeatures(event)[0];
       const id = String(feature?.properties?.id ?? "");
       if (!id) return;
       const store = useMapStore.getState();
@@ -723,7 +732,7 @@ export function InvestigationMap() {
     const onCaseClick = (event: MapMouseEvent) => {
       const caseLayers = ["secret-cases", "secret-case-halos", "secret-case-labels"]
         .filter((layerId) => Boolean(map.getLayer(layerId)));
-      const feature = (map.queryRenderedFeatures(event.point, { layers: caseLayers })[0] ?? event.features?.[0]) as MapGeoJSONFeature | undefined;
+      const feature = (map.queryRenderedFeatures(event.point, { layers: caseLayers })[0] ?? eventFeatures(event)[0]) as MapGeoJSONFeature | undefined;
       const id = String(feature?.properties?.id ?? "");
       if (!id) return;
       const store = useMapStore.getState();
@@ -732,7 +741,7 @@ export function InvestigationMap() {
       setHover(null);
     };
     const onMove = (event: MapMouseEvent) => {
-      const feature = event.features?.[0] as MapGeoJSONFeature | undefined;
+      const feature = eventFeatures(event)[0];
       if (!feature) { setHover(null); map.getCanvas().style.cursor = "grab"; return; }
       map.getCanvas().style.cursor = "pointer"; setHover(mapPoint(feature, map, event));
     };
@@ -797,10 +806,11 @@ export function InvestigationMap() {
     if (request.kind === "reset") map.easeTo({ center: INDIA_CENTER, zoom: 3, pitch: 60, bearing: -14, duration: 1200, essential: true });
     else if (request.kind === "fit-all") fitAll(map, state.markers);
     else if (request.kind === "fit-point") {
-      const zoom = request.zoomDist <= 26 ? 17 : request.zoomDist <= 40 ? 15 : 11.5;
-      const pitch = request.zoomDist <= 26 ? 64 : request.zoomDist <= 40 ? 60 : 52;
+      const zoomDist = request.zoomDist ?? 32;
+      const zoom = zoomDist <= 26 ? 17 : zoomDist <= 40 ? 15 : 11.5;
+      const pitch = zoomDist <= 26 ? 64 : zoomDist <= 40 ? 60 : 52;
       const target: [number, number] = [request.lon, request.lat];
-      const camera = cinematicCameraOptions(map, target, map.getBearing() + 18, request.zoomDist <= 26 ? 220 : 420, request.zoomDist <= 26 ? 140 : 240);
+      const camera = cinematicCameraOptions(map, target, map.getBearing() + 18, zoomDist <= 26 ? 220 : 420, zoomDist <= 26 ? 140 : 240);
       map.flyTo({ ...camera, zoom, pitch, bearing: map.getBearing() + 18, duration: 1500, essential: true });
     } else if (request.kind === "fit-location") {
       const location = state.locationById(request.locationId);

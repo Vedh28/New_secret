@@ -1,7 +1,8 @@
 import { Fragment, useState } from "react";
 import { useAppStore } from "../store";
+import { useBackendStore } from "../store/backend";
 import { Section } from "../types";
-import { Bell, Building2, ChevronDown, FileText, Radar, Shield, TimerReset, Users, Play, Upload } from "lucide-react";
+import { Bell, Building2, ChevronDown, FileText, MapPin, MessageSquare, Play, Radar, ScrollText, Settings, Shield, Sparkles, TimerReset, Users, Upload } from "lucide-react";
 
 type NavGroup = "OPERATIONS" | "ANALYZE" | "INTELLIGENCE" | "OUTPUT" | "ASSISTANT";
 
@@ -12,18 +13,26 @@ const items: { id: Exclude<Section, "login">; label: string; icon: React.ReactNo
   { id: "network", label: "Network", icon: <Users size={14} />, group: "ANALYZE" },
   { id: "entities", label: "Entities", icon: <Building2 size={14} />, group: "ANALYZE" },
   { id: "timeline", label: "Timeline", icon: <TimerReset size={14} />, group: "ANALYZE" },
+  { id: "locations", label: "Locations", icon: <MapPin size={14} />, group: "ANALYZE" },
+  { id: "transactions", label: "Transactions", icon: <MessageSquare size={14} />, group: "ANALYZE" },
+  { id: "communications", label: "Communications", icon: <Users size={14} />, group: "ANALYZE" },
   { id: "alerts", label: "Alerts", icon: <Bell size={14} />, group: "INTELLIGENCE" },
   { id: "simulation", label: "Simulation", icon: <Play size={14} />, group: "INTELLIGENCE" },
   { id: "reports", label: "Reports", icon: <FileText size={14} />, group: "OUTPUT" },
+  { id: "audit", label: "Audit", icon: <ScrollText size={14} />, group: "OUTPUT" },
+  { id: "settings", label: "Settings", icon: <Settings size={14} />, group: "OUTPUT" },
+  { id: "assistant", label: "Assistant", icon: <Sparkles size={14} />, group: "ASSISTANT" },
 ];
 
-const GROUP_ORDER: NavGroup[] = ["OPERATIONS", "ANALYZE", "INTELLIGENCE", "OUTPUT"];
+const GROUP_ORDER: NavGroup[] = ["OPERATIONS", "ANALYZE", "INTELLIGENCE", "OUTPUT", "ASSISTANT"];
 
 export function TopNav() {
   const { section, setSection } = useAppStore();
+  const mode = useBackendStore((s) => s.mode);
   const [openGroup, setOpenGroup] = useState<NavGroup | null>(null);
   const grouped = GROUP_ORDER.map((g) => ({ group: g, items: items.filter((i) => i.group === g) }))
     .filter((g) => g.items.length > 0);
+  const connected = mode === "backend";
   return (
     <header className="top-nav">
       <div className="top-nav-brand">
@@ -73,6 +82,10 @@ export function TopNav() {
           </Fragment>
         ))}
       </nav>
+      <div className={`top-nav-mode ${connected ? "live" : "demo"}`} aria-label={connected ? "LIVE BACKEND" : "SYNTHETIC OFFLINE DEMO"}>
+        <span className="top-nav-mode-dot" />
+        <span>{connected ? "LIVE BACKEND" : "SYNTHETIC OFFLINE DEMO"}</span>
+      </div>
     </header>
   );
 }

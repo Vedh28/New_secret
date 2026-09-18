@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppStore } from "../store";
 import { useBackendStore } from "../store/backend";
-import { apiListCriminals, apiListCaseEntities, apiListCaseRelationships, apiListCases, type CaseRead, type EntityRead, type CriminalProfile } from "../services/api";
+import { apiListCriminals, apiListCaseEntities, apiListCaseRelationships, type CaseRead, type EntityRead, type CriminalProfile } from "../services/api";
 import { HudPage } from "../components/HudPage";
 import { HudCard, HoloList, StatRow } from "../components/HudPrimitives";
 import { IntelligenceSummary, PriorityPanel, RecommendationList, GapList } from "../components/IntelligenceUi";
 import { useCaseIntelligence } from "../hooks/useCaseIntelligence";
+import { useCaseSelection } from "../services/useCaseSelection";
 import { prototypeCases, prototypeEntities } from "../data/prototypeCase";
 
 type AnyEntity = { id: string; type: string; name: string; risk?: number; confidence?: number; aliases?: string[]; relationships?: number; sources?: number; lastActivity?: string };
 
 export function Investigation() {
   const backend = useBackendStore((s) => s.mode);
-  const [cases, setCases] = useState<CaseRead[]>([]);
-  const [caseKey, setCaseKey] = useState<string | null>(prototypeCases[0]?.caseId ?? null);
+  const { cases, caseKey, setCaseKey } = useCaseSelection();
   const [entities, setEntities] = useState<EntityRead[]>([]);
   const [relationships, setRelationships] = useState<number>(0);
   const [profiles, setProfiles] = useState<CriminalProfile[]>([]);
@@ -21,7 +21,7 @@ export function Investigation() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { selectedEntity, setSelectedEntity } = useAppStore();
-  const { intel: caseIntel } = useCaseIntelligence(caseKey ?? "");
+  const { intel: caseIntel } = useCaseIntelligence(caseKey);
 
   const reload = useCallback(async (key: string) => {
     setLoading(true);
@@ -44,17 +44,9 @@ export function Investigation() {
   }, []);
 
   useEffect(() => {
-    if (backend !== "backend") return;
-    apiListCases({ limit: 100 })
-      .then((res) => {
-        setCases(res.items);
-        if (res.items.length > 0) {
-          setCaseKey(res.items[0].case_number);
-          void reload(res.items[0].case_number);
-        }
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load cases"));
-  }, [backend, reload]);
+    if (backend === "backend" && caseKey) void reload(caseKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backend, caseKey]);
 
   const rows: AnyEntity[] = useMemo(() => {
     if (backend !== "backend") {

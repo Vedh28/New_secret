@@ -40,6 +40,7 @@ const OFFLINE_INTELLIGENCE: CaseIntelligence = {
       contradictory_signals: [], evidence_ids: [], confidence: 0.73,
       explanation: "P-0421 ↔ P-0312 is a POTENTIAL relationship (not directly observed) supported by shared organization, location and an intermediary. Requires confirmation before treating as a link." },
   ],
+  link_decisions: {},
   evidence_gaps: [
     { subject: "P-0421<->P-0312", known_evidence: ["Shared location", "Common intermediary"],
       missing_evidence: ["direct communication or transfer evidence", "independent confirmation from a second source type"],
@@ -62,7 +63,7 @@ const OFFLINE_INTELLIGENCE: CaseIntelligence = {
   ],
 };
 
-export function useCaseIntelligence(caseKey: string) {
+export function useCaseIntelligence(caseKey: string, refreshKey?: number) {
   const backend = useBackendStore((s) => s.mode);
   const [intel, setIntel] = useState<CaseIntelligence | null>(null);
   const [loading, setLoading] = useState(false);
@@ -81,7 +82,7 @@ export function useCaseIntelligence(caseKey: string) {
     } else {
       setIntel(null);
     }
-  }, [backend, caseKey]);
+  }, [backend, caseKey, refreshKey]);
 
   return { intel, loading, error, offline: backend !== "backend", offlineIntel: prototypeIntelligenceByCase[caseKey] ?? prototypeIntelligence };
 }

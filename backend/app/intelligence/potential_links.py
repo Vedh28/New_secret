@@ -53,6 +53,92 @@ def _shared_locations(data: CaseData) -> dict[tuple[str, str], int]:
     return shared
 
 
+def _support_sources(data: CaseData, a: str, b: str) -> dict[str, list[str]]:
+    """Map each supporting-signal kind to the source ids that back it.
+
+    Provenance for the potential-link hypothesis: never invent source ids,
+    only reuse ids already attached to relationships / evidence.
+    """
+    out: dict[str, list[str]] = {k: [] for k in
+                                 ("org", "loc", "intermediary", "overlap", "structural")}
+
+    def _append(dst: list[str], *values: str) -> None:
+        for v in values:
+            if v and v not in dst:
+                dst.append(v)
+
+    # Shared organization.
+    org_a: dict[str, list[str]] = defaultdict(list)
+    org_b: dict[str, list[str]] = defaultdict(list)
+    for r in data.relationships:
+        if r.rel_type == "MEMBER_OF":
+            if r.source == a:
+                org_a[r.target].extend(r.source_ids or [])
+            elif r.source == b:
+                org_b[r.target].extend(r.source_ids or [])
+    for org in set(org_a) & set(org_b):
+        _append(out["org"], *org_a[org], *org_b[org])
+
+    # Shared locations (via 2-hop device/vehicle links).
+    adj: dict[str, set[str]] = defaultdict(set)
+    for r in data.relationships:
+        adj[r.source].add(r.target)
+        adj[r.target].add(r.source)
+    loc_of: dict[str, set[str]] = defaultdict(set)
+    for r in data.relationships:
+        if r.rel_type in ("USES", "VISITED", "LOCATED_AT"):
+            loc_id = r.target
+            loc = data.entity(loc_id)
+            if loc and loc.type.upper() == "LOCATION":
+                loc_of[r.source].add(loc_id)
+                for owner in adj.get(r.source, ()):
+                    if loc_id not in loc_of[owner]:
+                        loc_of[owner].add(loc_id)
+    for loc in loc_of.get(a, set()) & loc_of.get(b, set()):
+        for r in data.relationships:
+            if r.rel_type in ("USES", "VISITED", "LOCATED_AT") and r.target == loc:
+                if r.source in (a, b) or r.source in adj.get(a, set()) or r.source in adj.get(b, set()):
+                    _append(out["loc"], *(r.source_ids or []))
+
+    # Common intermediary.
+    na, nb = adj.get(a, set()), adj.get(b, set())
+    for n in na & nb:
+        for r in data.relationships:
+            pair = {r.source, r.target}
+            if n in pair and (a in pair or b in pair):
+                _append(out["intermediary"], *(r.source_ids or []))
+
+    # Temporal overlap: relationships sharing an activity hour-bucket.
+    buckets: dict[str, set[str]] = defaultdict(set)
+    for r in data.relationships:
+        for ts in r.timestamps:
+            dt = _parse_ts(ts)
+            if dt:
+                buckets[dt.strftime("%Y-%m-%dT%H")].add(r.source)
+                buckets[dt.strftime("%Y-%m-%dT%H")].add(r.target)
+    for hour, entities in buckets.items():
+        if a in entities and b in entities:
+            for r in data.relationships:
+                if r.source in (a, b) and _parse_ts(r.first_seen or r.last_seen):
+                    if _parse_ts(r.first_seen or r.last_seen).strftime("%Y-%m-%dT%H") == hour:
+                        _append(out["overlap"], *(r.source_ids or []))
+
+    # Structural similarity: any evidence naming either endpoint.
+    for e in data.evidence:
+        if a in e.entity_ids or b in e.entity_ids:
+            _append(out["structural"], e.source_id)
+
+    return out
+
+
+def _parse_ts(value: str):
+    from datetime import datetime as _dt
+    try:
+        return _dt.fromisoformat(value.replace(" ", "T"))
+    except (ValueError, TypeError):
+        return None
+
+
 def _is_location(data: CaseData, entity_id: str) -> bool:
     e = data.entity(entity_id)
     return bool(e and e.type.upper() == "LOCATION")
@@ -179,15 +265,26 @@ def discover(data: CaseData, top_k: int = 10) -> list[PotentialLink]:
         if sig["struct"]:
             _add_signal(signals, f"Structural similarity ({sig['struct']:.0f}/100)")
 
+        # Provenance: source ids backing each signal, deduped, never invented.
+        support_sources = _support_sources(data, a, b)
+        evidence_ids: list[str] = []
+        for kind in ("org", "loc", "intermediary", "overlap"):
+            evidence_ids.extend(support_sources[kind])
+        evidence_ids = list(dict.fromkeys(evidence_ids))
+
+        # Why is this still POTENTIAL? Surface the contradictory/missing facts.
+        contradictory = _contradictory_signals(data, a, b, evidence_ids)
+
         results.append(
             PotentialLink(
                 source=a,
                 target=b,
                 score=round(min(100.0, score), 1),
                 supporting_signals=signals,
-                evidence_ids=[],
+                contradictory_signals=contradictory,
+                evidence_ids=evidence_ids,
                 confidence=round(score / 100.0, 2),
-                explanation=_explain(a, b, signals),
+                explanation=_explain(a, b, signals, contradictory),
             )
         )
 
@@ -223,8 +320,31 @@ def _subgraph_edges(data: CaseData):
     ]
 
 
-def _explain(a: str, b: str, signals: list[str]) -> str:
+def _contradictory_signals(data: CaseData, a: str, b: str, evidence_ids: list[str]) -> list[str]:
+    """Explain why a pair remains POTENTIAL rather than observed/confirmed."""
+    out: list[str] = []
+    has_direct = any(
+        (r.source == a and r.target == b) or (r.source == b and r.target == a)
+        for r in data.relationships
+    )
+    if not has_direct:
+        out.append("no direct communication or transfer observed")
+    src_types = {e.source_type for e in data.evidence
+                 if (a in e.entity_ids or b in e.entity_ids) and e.source_id in evidence_ids}
+    all_types = {e.source_type for e in data.evidence if a in e.entity_ids or b in e.entity_ids}
+    if len(all_types) < 2 and all_types:
+        out.append("supported by a single source type only")
+    if not evidence_ids and not has_direct:
+        out.append("no evidence-backed corroboration yet")
+    return out
+
+
+def _explain(a: str, b: str, signals: list[str], contradictory: list[str] | None = None) -> str:
+    contradictory = contradictory or []
     if not signals:
         return f"{a} and {b} share weak indirect signals (below reporting threshold)."
-    return f"{a} ↔ {b} is a POTENTIAL relationship (not observed directly) supported by: " \
+    base = f"{a} ↔ {b} is a POTENTIAL relationship (not observed directly) supported by: " \
            f"{'; '.join(signals)}. Requires confirmation before treating as a link."
+    if contradictory:
+        base += " Caveats: " + "; ".join(contradictory) + "."
+    return base

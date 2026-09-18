@@ -41,8 +41,6 @@ async def build_investigation_summary(
     title: str,
 ) -> list[ReportSection]:
     case = await _case(session, case_number)
-    sections: list[ReportSection] = []
-
     if case is None:
         return [
             ReportSection(
@@ -50,6 +48,15 @@ async def build_investigation_summary(
                 body=[f"No case found for {case_number}.", "Report reflects no associated records."],
             )
         ]
+    sections = await _investigation_summary_sections(session, store, case, title)
+    sections.extend(await _case_intelligence_sections(session, case))
+    return sections
+
+
+async def _investigation_summary_sections(
+    session: AsyncSession, store, case, title: str
+) -> list[ReportSection]:
+    sections: list[ReportSection] = []
 
     profiles = await _case_profiles(session, case.id)
     sections.append(
@@ -284,3 +291,110 @@ BUILDERS = {
     "transaction_analysis": build_transaction_analysis,
     "communication_analysis": build_communication_analysis,
 }
+
+
+def _status_label(status: str) -> str:
+    return status.replace("_", " ").title()
+
+
+async def _case_intelligence_sections(session: AsyncSession, case) -> list[ReportSection]:
+    """Derived decision-support sections for a case.
+
+    Every analytical claim is labelled OBSERVED / DERIVED / POTENTIAL /
+    ANALYST CONFIRMED (or REJECTED/DEFERRED) and accompanied by its evidence
+    ids. Indicators are never described as proof.
+    """
+    from app.services.case_intelligence_service import CaseIntelligenceService
+
+    try:
+        intel = await CaseIntelligenceService(session).build(case.id)
+    except Exception:  # noqa: BLE001 - never break a report on a missing graph
+        return [ReportSection(heading="Case Intelligence", body=["Intelligence unavailable."])]
+
+    sections: list[ReportSection] = []
+
+    if intel.get("potential_links"):
+        rows: list[str] = []
+        for link in intel["potential_links"][:10]:
+            decision = (intel.get("link_decisions") or {}).get(f"{link['source']}<->{link['target']}")
+            status = "POTENTIAL"
+            if decision and decision.get("new_status"):
+                status = decision["new_status"]
+            signals = "; ".join(link.get("supporting_signals", [])[:3])
+            caveats = "; ".join(link.get("contradictory_signals", [])[:2]) or "requires confirmation"
+            evidence = ", ".join(link.get("evidence_ids", [])[:6]) or "none"
+            rows.append(
+                f"- {link['source']} <-> {link['target']}  [{_status_label(status)}] "
+                f"score {link.get('score', 0):.0f}  signals: {signals}  "
+                f"caveat: {caveats}  evidence: {evidence}"
+            )
+        sections.append(ReportSection(heading="Potential Relationships (hypotheses)", body=rows))
+
+    if intel.get("evidence_gaps"):
+        sections.append(
+            ReportSection(
+                heading="Evidence Gaps",
+                body=[
+                    f"- {g.get('subject')}: missing {'; '.join(g.get('missing_evidence', []))} "
+                    f"(recommended {g.get('recommended_source', 'CDR')} — {g.get('window', '')})"
+                    for g in intel["evidence_gaps"][:10]
+                ],
+            )
+        )
+
+    if intel.get("anomalies"):
+        sections.append(
+            ReportSection(
+                heading="Unusual Investigative Signals",
+                body=[
+                    f"- {a.get('kind')} {a.get('entity_id', '')}  baseline {a.get('baseline', 0)} / "
+                    f"observed {a.get('observed', 0)}  ({a.get('deviation', 0):+.0f}%) — "
+                    f"{a.get('explanation', '')}"
+                    for a in intel["anomalies"][:10]
+                ],
+            )
+        )
+
+    if intel.get("recommendations"):
+        sections.append(
+            ReportSection(
+                heading="Next Best Actions",
+                body=[
+                    f"- {r.get('kind')} {r.get('subject')} — {', '.join(r.get('reasoning', [])[:2])} "
+                    f"(data: {r.get('recommended_data', '')})"
+                    for r in intel["recommendations"][:8]
+                ],
+            )
+        )
+
+    dna = intel.get("network_dna")
+    if dna:
+        sections.append(
+            ReportSection(
+                heading="Network Structure",
+                body=_fmt_lines({
+                    "Entities": len(intel.get("entities", [])),
+                    "Relationships": len(intel.get("relationships", [])),
+                    "Communities": dna.get("community_count", 0),
+                    "Density": dna.get("density", 0),
+                    "Bridge dependence": dna.get("bridge_dependence", "LOW"),
+                    "Evidence coverage": f"{dna.get('evidence_coverage', 0)}%",
+                }),
+            )
+        )
+
+    sections.append(
+        ReportSection(
+            heading="Analytical Caveats",
+            body=[
+                "All signals are decision-support indicators produced by deterministic "
+                "analysis, not findings of wrongdoing. Nothing here proves guilt.",
+                "Potential relationships and anomaly scores require analyst review and "
+                "independent corroboration before operational use.",
+                "This report is generated from synthetic demonstration data unless a live "
+                "backend with reviewed sources is connected.",
+            ],
+        )
+    )
+
+    return sections

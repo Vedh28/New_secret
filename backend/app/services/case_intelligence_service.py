@@ -112,6 +112,20 @@ class CaseIntelligenceService:
         recommendations = _build_recommendations(data, entity_priorities, entity_gains,
                                                  links, link_priorities, link_infos, evidence_gaps)
 
+        # --- Analyst decisions on potential links (P1.3) ---
+        from app.repositories.link_decision_repository import LinkDecisionRepository
+        link_decisions = {
+            f"{d.entity_a}<->{d.entity_b}": {
+                "decision": d.decision,
+                "new_status": d.new_status,
+                "previous_status": d.previous_status,
+                "analyst_id": d.analyst_id,
+                "notes": d.notes,
+                "updated_at": d.updated_at.isoformat() if d.updated_at else "",
+            }
+            for d in await LinkDecisionRepository(self._session).list_by_case(case_id)
+        }
+
         result = {
             "case_id": case_id,
             "entities": data.entities,
@@ -122,6 +136,7 @@ class CaseIntelligenceService:
             "temporal_changes": [_d(c) for c in temporal_changes],
             "anomalies": [_d(a) for a in anomalies_full],
             "potential_links": [_d(p) for p in links],
+            "link_decisions": link_decisions,
             "evidence_gaps": [_d(g) for g in evidence_gaps],
             "network_dna": _d(network_dna),
             "entity_priorities": [_d(p) for p in entity_priorities],

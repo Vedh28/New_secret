@@ -372,7 +372,8 @@ export interface TimelineEvent {
 
 export interface LocationsResponse {
   locations: { name: string; observations: number }[];
-  visits: { location: string; entity_id: string; latitude?: string; longitude?: string; observations: number }[];
+  visits: { location: string; entity_id: string; latitude?: string; longitude?: string; observations: number;
+            linked_entity_id?: string; linked_entity_name?: string }[];
 }
 
 export async function apiCaseCommunications(caseKey: string): Promise<CommsResponse> {
@@ -395,7 +396,7 @@ export async function apiCaseLocations(caseKey: string): Promise<LocationsRespon
 
 export interface AlertRead {
   id: number;
-  case_id: number | null;
+  case_id: number | string | null;
   profile_id: number | null;
   severity: string;
   status: string;
@@ -603,6 +604,7 @@ export interface CaseIntelligence {
   temporal_changes: TemporalChange[];
   anomalies: Anomaly[];
   potential_links: PotentialLink[];
+  link_decisions: Record<string, unknown>;
   evidence_gaps: EvidenceGap[];
   network_dna: NetworkDNA;
   entity_priorities: PriorityScore[];
@@ -662,6 +664,41 @@ export async function apiSimulate(caseKey: string, operation: string, subject: s
   return request<SimulationResult>(`/api/v1/cases/${encodeURIComponent(caseKey)}/simulate`, {
     method: "POST",
     body: JSON.stringify({ operation, subject }),
+  });
+}
+
+// --- Analyst confirmation on potential links (P1.3) --------------------------
+
+export interface LinkDecisionEntry {
+  id: number;
+  case_id: number;
+  entity_a: string;
+  entity_b: string;
+  previous_status: string;
+  new_status: string;
+  decision: string;
+  analyst_id: number | null;
+  evidence_ids: string[];
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function apiListLinkDecisions(caseKey: string): Promise<LinkDecisionEntry[]> {
+  return request<LinkDecisionEntry[]>(`/api/v1/cases/${encodeURIComponent(caseKey)}/potential-links/decisions`);
+}
+
+export async function apiRecordLinkDecision(
+  caseKey: string,
+  source: string,
+  target: string,
+  decision: "CONFIRM" | "REJECT" | "DEFER",
+  evidence_ids?: string[],
+  notes?: string,
+): Promise<LinkDecisionEntry> {
+  return request<LinkDecisionEntry>(`/api/v1/cases/${encodeURIComponent(caseKey)}/potential-links/decision`, {
+    method: "POST",
+    body: JSON.stringify({ source, target, decision, evidence_ids: evidence_ids ?? [], notes: notes ?? null }),
   });
 }
 

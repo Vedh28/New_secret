@@ -30,13 +30,13 @@ export const SOURCE_TYPES: { id: SourceType; label: string; match: RegExp }[] = 
   { id: "SOCIAL", label: "Social Intelligence", match: /social|post|message|chat|media/i },
 ];
 
-export const SUPPORTED_EXT = ["csv", "tsv", "txt", "json"];
+export const SUPPORTED_EXT = ["csv", "tsv", "txt", "json", "xlsx"];
 
 export interface FileAnalysis {
   filename: string;
   ext: string;
   size: number;
-  format: "CSV" | "TSV" | "JSON" | "TEXT" | "UNSUPPORTED";
+  format: "CSV" | "TSV" | "JSON" | "TEXT" | "XLSX" | "UNSUPPORTED";
   sourceType: SourceType;
   columns: string[];
   recordCount: number;
@@ -46,6 +46,7 @@ export interface FileAnalysis {
   missing: number;
   quality: number;
   errors: string[];
+  note?: string;
 }
 
 export function detectSourceType(filename: string): SourceType {
@@ -59,6 +60,7 @@ export function detectSourceType(filename: string): SourceType {
 export function detectFormat(filename: string, size: number): FileAnalysis["format"] {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   if (!SUPPORTED_EXT.includes(ext)) return "UNSUPPORTED";
+  if (ext === "xlsx") return "XLSX";
   if (ext === "csv") return "CSV";
   if (ext === "tsv") return "TSV";
   if (ext === "json") return "JSON";
@@ -96,6 +98,16 @@ export async function analyzeFile(file: File, sourceTypeOverride?: SourceType): 
 
   if (format === "UNSUPPORTED") {
     base.errors.push(`Unsupported format (.${ext}). Supported: ${SUPPORTED_EXT.join(", ")}.`);
+    return base;
+  }
+
+  // XLSX is parsed server-side (openpyxl); the browser cannot reliably decode
+  // the binary workbook. Upload it as-is and let the backend intake parse it.
+  if (format === "XLSX") {
+    base.note = "Spreadsheet parsed server-side by the ingestion pipeline.";
+    base.recordCount = 0;
+    base.valid = 0;
+    base.quality = 0;
     return base;
   }
 

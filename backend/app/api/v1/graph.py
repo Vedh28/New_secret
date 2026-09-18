@@ -107,9 +107,19 @@ async def expand(
 async def materialize(
     session: DbSession,
     store: GraphStoreDep,
-    _: RequireAnalyst,
+    user: RequireAnalyst,
 ) -> dict:
-    return await GraphMaterializer(session, store).run()
+    summary = await GraphMaterializer(session, store).run()
+    try:
+        from app.services.audit_service import AuditService
+        await AuditService(session).record(
+            user, "graph_refreshed", object_type="graph",
+            result={"entities": summary["entities"], "edges": summary["edges"]},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    await session.commit()
+    return summary
 
 
 # --- Analytics (Phase 8) ----------------------------------------------------

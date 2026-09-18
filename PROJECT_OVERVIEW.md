@@ -1,7 +1,7 @@
 # SECRET Project Overview and Technical Approach
 
 **Project:** SECRET - Strategic Entity & Criminal Relationship Exploration Tool  
-**Repository:** `Vedh28/SECRET_`  
+**Repository:** `Vedh28/NEW_SECRET` (development target; `Vedh28/SECRET_` is legacy reference only)  
 **Status:** Working full-stack demo with React frontend, FastAPI backend, relational and graph persistence, ingestion, analytics, reports, and a MapLibre-based 3D intelligence map.
 
 ## 1. Purpose

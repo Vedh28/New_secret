@@ -51,15 +51,36 @@ class StructuredAssistant:
         self._session = session
         self._store = store
         self._case_intel = case_intel  # optional dict from CaseIntelligenceService
+        self._case_key: str | None = None
 
-    async def answer(self, question: str) -> IntelligenceResponse:
+    async def answer(self, question: str, case_key: str | None = None) -> IntelligenceResponse:
+        self._case_key = case_key
         q = question
         intent = _intent(q.lower())
-        data = self._load_case_data()
+        data = await self._load_case_data()
         return self._build(question, intent, data)
 
-    def _load_case_data(self) -> CaseData:
-        """Use the offline demo case (deterministic single source in tests/demo)."""
+    async def _load_case_data(self) -> CaseData:
+        """Load persisted case data when a case_key is provided.
+
+        Falls back to the deterministic offline demo case when:
+        - no case_key is given
+        - the case cannot be resolved from the database
+        - the session is unavailable
+        """
+        if self._case_key:
+            try:
+                from app.repositories.case_analytics_repo import build_case_data
+                from app.repositories.case_repository import CaseRepository
+
+                repo = CaseRepository(self._session)
+                case = await repo.get_by_case_number(self._case_key)
+                if case is None and self._case_key.isdigit():
+                    case = await repo.get(int(self._case_key))
+                if case is not None:
+                    return await build_case_data(self._session, case.id)
+            except Exception:  # noqa: BLE001 - graceful fallback when DB is unavailable
+                pass
         return build_demo_case()
 
     def _build(self, question: str, intent: str, data: CaseData) -> IntelligenceResponse:
@@ -67,6 +88,15 @@ class StructuredAssistant:
         entity_id = match.group(1).upper() if match else None
         entity = data.entity(entity_id) if entity_id else None
 
+        if entity_id is not None and entity is None:
+            # The referenced entity is not present in the selected case's data.
+            return IntelligenceResponse(
+                type="ENTITY_QUERY",
+                query=question,
+                summary=f"No supporting evidence found in the selected case for {entity_id}. "
+                        "The case may not contain a record naming it.",
+                found=False,
+            )
         if entity is not None and intent in ("ENTITY_QUERY", "RELATIONSHIP_QUERY"):
             return self._entity_response(question, entity, data)
         if intent == "POTENTIAL_LINK_QUERY":

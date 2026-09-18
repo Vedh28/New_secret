@@ -104,6 +104,32 @@ class GraphMaterializer:
 
         # Extracted entities + relationships (ingested case data) -> graph.
         entities = list((await self._session.execute(select(Entity))).scalars().all())
+        relationships = list((await self._session.execute(select(EntityRelationship))).scalars().all())
+        extracted = await self.materialize_entities(entities, relationships)
+
+        return {
+            "entities": node_count + extracted["entities"],
+            "edges": edge_count + extracted["edges"],
+            "cases": len(cases),
+        }
+
+    async def materialize_case(self, case_id: int) -> dict[str, int]:
+        """Upsert only ONE case's extracted entities + relationships.
+
+        Post-ingestion pipeline: after a source is processed and persisted,
+        this keeps the graph projection fresh without a full-database sweep.
+        """
+        entities = list((await self._session.execute(
+            select(Entity).where(Entity.case_id == case_id)
+        )).scalars().all())
+        relationships = list((await self._session.execute(
+            select(EntityRelationship).where(EntityRelationship.case_id == case_id)
+        )).scalars().all())
+        return await self.materialize_entities(entities, relationships)
+
+    async def materialize_entities(self, entities: list, relationships: list) -> dict[str, int]:
+        """Upsert extracted entities + relationships into the graph store."""
+        node_count = 0
         for entity in entities:
             await self._store.upsert_node(
                 GraphNode(
@@ -119,7 +145,7 @@ class GraphMaterializer:
             )
             node_count += 1
 
-        relationships = list((await self._session.execute(select(EntityRelationship))).scalars().all())
+        edge_count = 0
         for relationship in relationships:
             await self._store.upsert_edge(
                 GraphEdge(
@@ -135,4 +161,4 @@ class GraphMaterializer:
             )
             edge_count += 1
 
-        return {"entities": node_count, "edges": edge_count, "cases": len(cases)}
+        return {"entities": node_count, "edges": edge_count, "cases": 1}

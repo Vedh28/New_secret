@@ -6,7 +6,6 @@ import {
   apiCreateCase,
   apiGenerateAlerts,
   apiListCases,
-  apiMaterializeGraph,
   apiProcessSource,
   apiUploadSource,
   type CaseRead,
@@ -206,7 +205,6 @@ export function CaseIntakePage() {
           processed.push(res);
         }
         setStage("GRAPH UPDATE");
-        await apiMaterializeGraph();
         await refreshGraph();
         let alertsCreated = 0;
         try {
@@ -318,7 +316,7 @@ export function CaseIntakePage() {
         {error && <HudCard label="Error" title="Unable to proceed"><div className="meta">{error}</div></HudCard>}
 
         {/* ---- Upload dropzone ---- */}
-        <input ref={fileInputRef} type="file" multiple accept=".csv,.tsv,.txt,.json" style={{ display: "none" }} aria-label="Upload case data files" onChange={(e) => e.target.files && addFiles(e.target.files)} />
+        <input ref={fileInputRef} type="file" multiple accept=".csv,.tsv,.txt,.json,.xlsx" style={{ display: "none" }} aria-label="Upload case data files" onChange={(e) => e.target.files && addFiles(e.target.files)} />
         <HudCard label="Upload" title="Drop case data here">
           <div
             role="button"
@@ -337,7 +335,7 @@ export function CaseIntakePage() {
           >
             <div className="brand" style={{ fontSize: 26 }}>↑</div>
             <div>Drag &amp; drop files, or click to browse</div>
-            <div className="meta">CSV · TSV · TXT · JSON (multi-select supported)</div>
+            <div className="meta">CSV · TSV · TXT · JSON · XLSX (multi-select supported)</div>
             <div className="hud-search-hints" style={{ marginTop: 10 }}>
               {SOURCE_TYPES.map((s) => (
                 <button key={s.id} className="pill" type="button" onClick={(e) => e.stopPropagation()} title="Source type">{s.label}</button>

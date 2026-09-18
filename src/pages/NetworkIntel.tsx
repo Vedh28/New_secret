@@ -4,7 +4,7 @@ import { HudCard, HoloList } from "../components/HudPrimitives";
 import { NetworkGraph } from "../components/NetworkGraph";
 import { PriorityPanel, RecommendationList, PotentialLinksList, TemporalChangesList } from "../components/IntelligenceUi";
 import { useBackendStore } from "../store/backend";
-import { apiCommunities } from "../services/api";
+import { apiCommunities, apiRecordLinkDecision } from "../services/api";
 import { useCaseIntelligence } from "../hooks/useCaseIntelligence";
 import { useCaseSelection } from "../services/useCaseSelection";
 
@@ -40,7 +40,16 @@ export function NetworkIntel() {
   const online = mode === "backend";
   const [clusterCount, setClusterCount] = useState(0);
   const { caseKey } = useCaseSelection();
-  const { intel: caseIntel } = useCaseIntelligence(caseKey);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { intel } = useCaseIntelligence(caseKey, refreshKey);
+
+  const decide = async (link: { source: string; target: string }, decision: "CONFIRM" | "REJECT" | "DEFER") => {
+    if (!online || !caseKey) return;
+    try {
+      await apiRecordLinkDecision(caseKey, link.source, link.target, decision);
+      setRefreshKey((k) => k + 1);
+    } catch { /* leave UI as-is on failure */ }
+  };
 
   // Rank nodes by risk to approximate influencer importance.
   const influencers = useMemo(() => {
@@ -97,7 +106,7 @@ export function NetworkIntel() {
         <HudCard label="Graph overview" title="Network Telemetry" className="hud-network-controls">
           <div className="hud-network-telemetry">
             <div><span>Top connected entity</span><strong>{hot[0]?.node.name ?? "Awaiting data"}</strong></div>
-            <div><span>Evidence coverage</span><strong>{caseIntel?.network_dna?.evidence_coverage ?? 78}%</strong></div>
+            <div><span>Evidence coverage</span><strong>{intel?.network_dna?.evidence_coverage ?? 0}%</strong></div>
             <div><span>Communities mapped</span><strong>{clusterCount}</strong></div>
             <div><span>People involved</span><strong>{peopleCount}</strong></div>
           </div>
@@ -134,10 +143,10 @@ export function NetworkIntel() {
               ))}
             </div>
           </HudCard>
-          {caseIntel && <PriorityPanel title="Priority targets" items={caseIntel.entity_priorities} />}
-          {caseIntel && <TemporalChangesList changes={caseIntel.temporal_changes} />}
-          {caseIntel && <PotentialLinksList links={caseIntel.potential_links} />}
-          {caseIntel && <RecommendationList recs={caseIntel.recommendations} />}
+          {intel && <PriorityPanel title="Priority targets" items={intel.entity_priorities} />}
+          {intel && <TemporalChangesList changes={intel.temporal_changes} />}
+          {intel && <PotentialLinksList links={intel.potential_links} decisions={intel.link_decisions} onDecision={online ? decide : undefined} />}
+          {intel && <RecommendationList recs={intel.recommendations} />}
         </div>
       </div>
     </HudPage>

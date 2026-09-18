@@ -113,6 +113,69 @@ def transaction_amounts(relationships: list[RelData], tx_types=("TRANSFERRED_TO"
     return anomalies
 
 
+def transaction_frequency(relationships: list[RelData], tx_types=("TRANSFERRED_TO",)) -> list[Anomaly]:
+    """Flag relationship pairs whose transfer COUNT deviates from the peer median."""
+    counts = [r.count for r in relationships if r.rel_type in tx_types and r.count > 0]
+    if len(counts) < 3:
+        return []
+    baseline = _median(counts)
+    if baseline <= 0:
+        return []
+    anomalies: list[Anomaly] = []
+    for rel in relationships:
+        if rel.rel_type not in tx_types or rel.count <= 0:
+            continue
+        if rel.count >= 2 * baseline:
+            dev = round((rel.count - baseline) * 100.0 / baseline, 1)
+            anomalies.append(
+                Anomaly(
+                    kind="TX_FREQUENCY",
+                    entity_id=f"{rel.source}->{rel.target}",
+                    baseline=float(baseline),
+                    observed=float(rel.count),
+                    deviation=dev,
+                    score=min(100.0, _zscore(dev) + 15.0),
+                    timestamp=rel.last_seen,
+                    evidence=[f"{rel.count} transfers vs peer median {baseline:.0f}"],
+                    explanation=f"{rel.source}->{rel.target} exchanges funds {rel.count} times, "
+                                f"{dev:+.0f}% above the peer median — a frequency anomaly, "
+                                f"investigative signal only.",
+                )
+            )
+    return anomalies
+
+
+def transaction_velocity(relationships: list[RelData], tx_types=("TRANSFERRED_TO",), per_hour: int = 2) -> list[Anomaly]:
+    """Flag rapid-fire transfers between a pair within a short window."""
+    windowed: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    for rel in relationships:
+        if rel.rel_type not in tx_types:
+            continue
+        for ts in rel.timestamps:
+            h = _hour(ts)
+            if h:
+                windowed[(rel.source, rel.target)][h] += 1
+    anomalies: list[Anomaly] = []
+    for (source, target), hours in windowed.items():
+        for hour, count in hours.items():
+            if count >= per_hour:
+                anomalies.append(
+                    Anomaly(
+                        kind="TX_VELOCITY",
+                        entity_id=f"{source}->{target}",
+                        baseline=1.0,
+                        observed=float(count),
+                        deviation=round((count - 1) * 100.0, 1),
+                        score=min(100.0, 40.0 + count * 15.0),
+                        timestamp=hour,
+                        evidence=[f"{count} transfers from {source}->{target} in {hour} window"],
+                        explanation=f"{count} rapid transfers between {source} and {target} in one "
+                                    f"hour — unusual flow velocity, investigative signal only.",
+                    )
+                )
+    return anomalies
+
+
 def new_relationship_anomalies(relationships: list[RelData], window_days: int = 14) -> list[Anomaly]:
     """Flag relationships observed only in a recent window (potential new links)."""
     now = max((_parse(r.last_seen) for r in relationships if _parse(r.last_seen)), default=None)
@@ -170,6 +233,8 @@ def detect_all(data: CaseData, location_observations: dict[str, int] | None = No
     anomalies: list[Anomaly] = []
     anomalies += communication_bursts(data.relationships)
     anomalies += transaction_amounts(data.relationships)
+    anomalies += transaction_frequency(data.relationships)
+    anomalies += transaction_velocity(data.relationships)
     anomalies += new_relationship_anomalies(data.relationships)
     if location_observations:
         anomalies += location_anomalies(data.entities, location_observations)

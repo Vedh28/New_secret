@@ -11,6 +11,7 @@ from app.models.alert import Alert
 from app.models.entity import Entity, EntityRelationship
 from app.models.lead import Lead
 from app.models.source import Source
+from app.models.link_decision import PotentialLinkDecision
 
 __all__ = [
     "User",
@@ -29,4 +30,5 @@ __all__ = [
     "EntityRelationship",
     "Lead",
     "Source",
+    "PotentialLinkDecision",
 ]
