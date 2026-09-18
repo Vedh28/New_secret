@@ -110,9 +110,15 @@ class EvidenceIntegrity(Base):
 
 
 class IntegrityOutbox(Base):
-    """Reliable integrity event queue (outbox pattern)."""
+    """Reliable integrity event queue (outbox pattern).
+
+    `dedupe_key` carries a deterministic identity for idempotent event types
+    (e.g. INTEGRITY SNAPSHOT). The database-level unique constraint makes
+    concurrent duplicate enqueues safe: one logical event, one outbox row.
+    """
 
     __tablename__ = "integrity_outbox"
+    __table_args__ = (UniqueConstraint("dedupe_key", name="uq_outbox_dedupe_key"),)
 
     id: Mapped[int] = mapped_column(BigSerialId, primary_key=True, autoincrement=True)
     case_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
@@ -126,6 +132,7 @@ class IntegrityOutbox(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text)
     ledger_transaction_id: Mapped[str | None] = mapped_column(String(64))
+    dedupe_key: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

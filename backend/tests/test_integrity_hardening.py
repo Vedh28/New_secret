@@ -173,12 +173,11 @@ class TestIngestionIntegrityFlow:
 class TestSnapshotIdempotency:
     async def test_identical_snapshot_not_repeated(self, svc_ctx):
         from app.blockchain.service import BlockchainIntegrityService
+        from app.services.case_intelligence_service import CaseIntelligenceService
         S = svc_ctx["S"]
         case_id = svc_ctx["case_id"]
-        snapshot = {"case_id": case_id, "entities": [], "relationships": [], "evidence": [],
-                    "anomalies": [], "potential_links": [], "evidence_gaps": [],
-                    "recommendations": [], "network_dna": {}, "entity_priorities": []}
         async with S() as session:
+            snapshot = await CaseIntelligenceService(session).build(case_id, cache={}, register_integrity=False)
             svc = BlockchainIntegrityService(session)
             first = await svc.register_intelligence_snapshot(case_id=case_id, snapshot=snapshot)
             assert first["duplicate"] is False
@@ -202,6 +201,32 @@ class TestSnapshotIdempotency:
             second = await svc.register_intelligence_snapshot(case_id=case_id, snapshot=changed)
             assert second["duplicate"] is False
             assert hash_intelligence_snapshot(changed) == second["snapshot_hash"]
+
+    async def test_different_case_independent_snapshots(self, svc_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+        S = svc_ctx["S"]
+        case_id = svc_ctx["case_id"]
+        async with S() as session:
+            svc = BlockchainIntegrityService(session)
+            snapshot = {"case_id": case_id, "entities": [], "relationships": [], "evidence": [],
+                        "anomalies": [], "potential_links": [], "evidence_gaps": [],
+                        "recommendations": [], "network_dna": {}, "entity_priorities": []}
+            r1 = await svc.register_intelligence_snapshot(case_id=case_id, snapshot=snapshot)
+            assert r1["duplicate"] is False
+            other = await svc.register_intelligence_snapshot(case_id=99999, snapshot=snapshot)
+            assert other["duplicate"] is False
+
+    async def test_different_engine_version_independent(self, svc_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+        S = svc_ctx["S"]
+        case_id = svc_ctx["case_id"]
+        async with S() as session:
+            svc = BlockchainIntegrityService(session)
+            snapshot_hash = hash_intelligence_snapshot({"a": 1})
+            r1 = await svc.enqueue_snapshot(case_id=case_id, snapshot_hash=snapshot_hash, engine_version="1.0")
+            assert r1["duplicate"] is False
+            r2 = await svc.enqueue_snapshot(case_id=case_id, snapshot_hash=snapshot_hash, engine_version="2.0")
+            assert r2["duplicate"] is False
 
 
 class TestRegisteredVsVerifiedCounts:
@@ -239,6 +264,38 @@ class TestOutboxRetrySafety:
             assert await svc.flush_pending(case_id) == []
             events = await svc.get_events(case_id)
             assert len([e for e in events if e["event_type"] == "INTELLIGENCE_SNAPSHOT"]) == 1
+
+    async def test_failed_snapshot_outbox_is_retried_as_same_identity(self, svc_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.integrity_repository import IntegrityOutboxRepository
+        S = svc_ctx["S"]
+        case_id = svc_ctx["case_id"]
+        snapshot_hash = hash_intelligence_snapshot({"x": 1})
+        async with S() as session:
+            outbox_repo = IntegrityOutboxRepository(session)
+            key = f"{case_id}::INTELLIGENCE_SNAPSHOT::1.x::{snapshot_hash}"
+            await outbox_repo.create(
+                case_id=str(case_id), event_type="INTELLIGENCE_SNAPSHOT",
+                entity_type="case", entity_id=str(case_id),
+                payload_hash="H", payload_json={"snapshot_hash": snapshot_hash, "event_type": "INTELLIGENCE_SNAPSHOT"},
+                actor_id=None, status="FAILED", attempts=2, last_error="ledger down", dedupe_key=key,
+            )
+            await session.commit()
+
+            svc = BlockchainIntegrityService(session)
+            result = await svc.enqueue_snapshot(case_id=case_id, snapshot_hash=snapshot_hash, engine_version="1.x")
+            assert result["retried"] is True  # reused the EXISTING failed identity
+
+            # Flush confirms it into exactly ONE ledger event.
+            await svc.flush_pending(case_id)
+            events = await svc.get_events(case_id)
+            snap = [e for e in events if e["event_type"] == "INTELLIGENCE_SNAPSHOT"]
+            assert len(snap) == 1
+            assert snap[0]["payload_json"].get("snapshot_hash") == snapshot_hash
+
+            # Re-enqueuing after confirmation is a no-op.
+            again = await svc.enqueue_snapshot(case_id=case_id, snapshot_hash=snapshot_hash, engine_version="1.x")
+            assert again["duplicate"] is True
 
 
 class TestEventPayloadConsistency:

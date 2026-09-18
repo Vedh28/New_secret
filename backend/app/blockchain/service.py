@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.blockchain import hashes, merkle
@@ -151,6 +152,7 @@ class BlockchainIntegrityService:
             outbox.status = "CONFIRMED"
             outbox.ledger_transaction_id = tx
             outbox.processed_at = datetime.now(timezone.utc)
+            outbox.last_error = None  # cleared on a successful retry
             await outbox_repo.save(outbox)
             confirmed.append({"outbox_id": outbox.id, "transaction_id": tx, "block_index": block.index})
         return confirmed
@@ -350,22 +352,75 @@ class BlockchainIntegrityService:
                 return {"transaction_id": None, "block_index": None, "pending": True}
         return None
 
-    async def snapshot_hash_present(self, case_id: str, snapshot_hash: str) -> bool:
+    # ------------------------------------------------------------------
+    # Atomic snapshot idempotency (Phases 1-3)
+    #
+    # The canonical identity is  case_id + event_type + engine_version +
+    # snapshot_hash, enforced by a DATABASE-LEVEL unique index on
+    # integrity_outbox.dedupe_key — not an in-memory lock, so concurrently
+    # processed requests collapse onto a single outbox identity.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _snapshot_dedupe_key(case_id, engine_version, snapshot_hash) -> str:
+        return (f"{case_id}::INTELLIGENCE_SNAPSHOT::{engine_version}::{snapshot_hash}")
+
+    async def snapshot_hash_confirmed(self, case_id: str, snapshot_hash: str) -> bool:
         """True when this exact snapshot fingerprint was already committed."""
         case_id = _normalize_case(case_id)
         events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=2000)
-        if any(e.event_type == "INTELLIGENCE_SNAPSHOT"
-               and e.payload_json.get("snapshot_hash") == snapshot_hash for e in events):
-            return True
-        pending = await IntegrityOutboxRepository(self._session).pending_for_case(case_id, limit=500)
-        return any(o.event_type == "INTELLIGENCE_SNAPSHOT"
-                   and o.payload_json.get("snapshot_hash") == snapshot_hash for o in pending)
+        return any(e.event_type == "INTELLIGENCE_SNAPSHOT"
+                   and e.payload_json.get("snapshot_hash") == snapshot_hash for e in events)
+
+    async def _dedupe_outbox(self, *, case_id: str, dedupe_key: str, event_type: str,
+                             entity_type: str | None, entity_id: str | None,
+                             payload: dict, actor_id: int | None) -> dict:
+        """Atomically create/reuse one outbox identity.
+
+        Returns {"state": created|retried|reused_pending|confirmed, "outbox",
+                 "transaction_id"}. The unique index on dedupe_key makes
+        concurrent create races collapse onto a single row.
+        """
+        case_id = _normalize_case(case_id)
+        repo = IntegrityOutboxRepository(self._session)
+        existing = await repo.get_by_dedupe_key(case_id, dedupe_key)
+        if existing is not None:
+            if existing.status == "CONFIRMED":
+                return {"state": "confirmed", "outbox": existing,
+                        "transaction_id": existing.ledger_transaction_id}
+            if existing.status == "PENDING":
+                return {"state": "reused_pending", "outbox": existing,
+                        "transaction_id": existing.ledger_transaction_id}
+            # FAILED -> retry the SAME identity; never a duplicate event.
+            existing.status = "PENDING"
+            existing.attempts = (existing.attempts or 0) + 1
+            logger.info("integrity outbox retry id=%s event=%s case=%s", existing.id, event_type, case_id)
+            await repo.save(existing)
+            return {"state": "retried", "outbox": existing,
+                    "transaction_id": existing.ledger_transaction_id}
+
+        try:
+            async with self._session.begin_nested():
+                outbox = await repo.create(
+                    case_id=case_id, event_type=event_type, entity_type=entity_type,
+                    entity_id=entity_id, payload_hash=hash_json(payload),
+                    payload_json=payload, actor_id=actor_id, status="PENDING",
+                    attempts=0, dedupe_key=dedupe_key,
+                )
+            return {"state": "created", "outbox": outbox, "transaction_id": None}
+        except IntegrityError:
+            # A concurrent worker inserted the same identity first: reuse it.
+            logger.info("integrity outbox dedupe race case=%s key=%s", case_id, dedupe_key)
+            existing = await repo.get_by_dedupe_key(case_id, dedupe_key)
+            if existing is None:
+                raise
+            return {"state": "confirmed" if existing.status == "CONFIRMED" else "reused_pending",
+                    "outbox": existing, "transaction_id": existing.ledger_transaction_id}
 
     async def register_intelligence_snapshot(self, *, case_id: str, snapshot: dict,
                                              actor_id: int | None = None) -> dict:
         case_id = _normalize_case(case_id)
         snapshot_hash = hash_intelligence_snapshot(snapshot)
-        if await self.snapshot_hash_present(case_id, snapshot_hash):
+        if await self.snapshot_hash_confirmed(case_id, snapshot_hash):
             return {"duplicate": True, "snapshot_hash": snapshot_hash, "case_id": case_id}
         payload = {
             "event_type": "INTELLIGENCE_SNAPSHOT",
@@ -376,20 +431,33 @@ class BlockchainIntegrityService:
             "created_at": _now_iso(),
             "actor_id": str(actor_id or ""),
         }
-        outcome = await self._append_and_link(
-            case_id=case_id, event_type="INTELLIGENCE_SNAPSHOT",
-            entity_type="case", entity_id=str(case_id), payload=payload, actor_id=actor_id,
+        dedupe = await self._dedupe_outbox(
+            case_id=case_id, dedupe_key=self._snapshot_dedupe_key(case_id, "1.x", snapshot_hash),
+            event_type="INTELLIGENCE_SNAPSHOT", entity_type="case", entity_id=str(case_id),
+            payload=payload, actor_id=actor_id,
         )
-        return {**payload, "duplicate": False, "transaction_id": outcome.get("transaction_id"), "block_index": outcome.get("block_index")}
+        transaction_id = dedupe.get("transaction_id")
+        block_index = None
+        if dedupe["state"] in ("created", "retried", "reused_pending"):
+            confirmed = await self.flush_pending(case_id)
+            transaction_id = confirmed[0]["transaction_id"] if confirmed else transaction_id
+            block_index = confirmed[0]["block_index"] if confirmed else None
+        return {
+            **payload,
+            "duplicate": dedupe["state"] == "confirmed",
+            "transaction_id": transaction_id,
+            "block_index": block_index,
+        }
 
     async def enqueue_snapshot(self, *, case_id, snapshot_hash: str, engine_version: str = "1.x",
                                actor_id: int | None = None) -> dict:
         """Idempotent snapshot enqueue (case + snapshot_hash + engine_version).
 
-        An identical fingerprint already registered or pending is a no-op.
+        Backed by the dedupe_key unique index: concurrent duplicate enqueues
+        collapse onto one outbox identity; confirmed snapshots short-circuit.
         """
         case_id = _normalize_case(case_id)
-        if await self.snapshot_hash_present(case_id, snapshot_hash):
+        if await self.snapshot_hash_confirmed(case_id, snapshot_hash):
             return {"duplicate": True, "snapshot_hash": snapshot_hash, "case_id": case_id}
         payload = {
             "event_type": "INTELLIGENCE_SNAPSHOT",
@@ -400,10 +468,18 @@ class BlockchainIntegrityService:
             "created_at": _now_iso(),
             "actor_id": str(actor_id or ""),
         }
-        await self.enqueue(case_id=case_id, event_type="INTELLIGENCE_SNAPSHOT",
-                           entity_type="case", entity_id=str(case_id),
-                           payload=payload, actor_id=actor_id)
-        return {"duplicate": False, "snapshot_hash": snapshot_hash, "case_id": case_id}
+        dedupe = await self._dedupe_outbox(
+            case_id=case_id, dedupe_key=self._snapshot_dedupe_key(case_id, engine_version, snapshot_hash),
+            event_type="INTELLIGENCE_SNAPSHOT", entity_type="case", entity_id=str(case_id),
+            payload=payload, actor_id=actor_id,
+        )
+        return {
+            "duplicate": dedupe["state"] in ("confirmed", "reused_pending"),
+            "retried": dedupe["state"] == "retried",
+            "snapshot_hash": snapshot_hash,
+            "case_id": case_id,
+            "transaction_id": dedupe.get("transaction_id"),
+        }
 
     # ------------------------------------------------------------------
     # Report integrity (Phase 13)
@@ -494,7 +570,8 @@ class BlockchainIntegrityService:
             )
             from app.blockchain.hashes import hash_intelligence_snapshot
             current = hash_intelligence_snapshot(snapshot)
-        except Exception:  # noqa: BLE001 - counting must never break the summary
+        except Exception as exc:  # noqa: BLE001 - counting must never break the summary
+            logger.warning("snapshot verification failed case=%s: %s", case_id, exc)
             return 0
         return sum(1 for e in snapshots if e.payload_json.get("snapshot_hash") == current)
 
@@ -544,7 +621,9 @@ class BlockchainIntegrityService:
                 continue
             try:
                 current = await self._recompute_content_hash(case_id, source)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - treat as unverifiable
+                logger.debug("evidence content hash recompute failed case=%s source=%s: %s",
+                             case_id, source.source_id, exc)
                 current = ""
             if current and current == row.content_hash:
                 results.append(_evidence_verification(row, status="VERIFIED", reason="content hash matches"))
@@ -653,7 +732,7 @@ class BlockchainIntegrityService:
 
         current_hashes = [hashes.hash_canonical_record(r) for r in records]
         current_record_hash = hashes.hash_canonical_record(entry)
-        root = merkle.merkle_root(current_hashes)
+        current_root = merkle.merkle_root(current_hashes)
 
         # Committed canonical sha (captured at ingest time) guards against the
         # stored record dict drifting from what was actually processed.
@@ -667,20 +746,41 @@ class BlockchainIntegrityService:
                 "record_hash": current_record_hash, "committed_record_hash": committed_hash,
             }
 
-        events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=500)
-        batch_event = next((e for e in events if e.event_type == "EVIDENCE_PROCESSED" and e.entity_id == source_id
-                            and e.payload_json.get("merkle_root") == root), None)
+        # The COMMITTED batch (ledger) is the authority: the record's inclusion
+        # proof must reconstruct the ROOT REGISTERED ON-CHAIN. We must not
+        # silently accept a fresh root recomputed from a mutated record set.
+        events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=2000)
+        batch_event = next((e for e in events if e.event_type == "EVIDENCE_PROCESSED"
+                            and e.entity_id == source_id and e.payload_json.get("merkle_root")), None)
         if batch_event is None:
             return {"verified": False, "status": "UNAVAILABLE",
-                    "reason": "no ledger batch event found for this source's current record set"}
+                    "reason": "no ledger batch registration exists for this source"}
+        committed_root = batch_event.payload_json.get("merkle_root")
+
+        if current_root != committed_root:
+            return {
+                "verified": False, "status": "MISMATCH",
+                "reason": "current record batch root differs from the committed ledger root "
+                          "(batch contents changed)",
+                "record_hash": current_record_hash,
+                "current_merkle_root": current_root,
+                "committed_merkle_root": committed_root,
+            }
 
         proof = merkle.build_merkle_proof(current_record_hash, current_hashes)
-        proof_valid = bool(proof) and merkle.verify_merkle_proof(proof, root) if proof else False
+        proof_valid = bool(proof) and merkle.verify_merkle_proof(proof, committed_root) if proof else False
+        if not proof_valid:
+            return {
+                "verified": False, "status": "MISMATCH",
+                "reason": "inclusion proof does not reconstruct the committed ledger root",
+                "record_hash": current_record_hash,
+                "committed_merkle_root": committed_root,
+            }
         return {
             "verified": True,
             "status": "VERIFIED",
             "record_hash": current_record_hash,
-            "merkle_root": root,
+            "merkle_root": committed_root,
             "record_count": len(records),
             "transaction_id": batch_event.transaction_id,
             "block_index": batch_event.block_index,

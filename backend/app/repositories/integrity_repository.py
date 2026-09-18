@@ -113,6 +113,15 @@ class IntegrityOutboxRepository(BaseRepository[IntegrityOutbox]):
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_by_dedupe_key(self, case_id: str, dedupe_key: str) -> IntegrityOutbox | None:
+        stmt = (
+            select(IntegrityOutbox)
+            .where(IntegrityOutbox.case_id == case_id, IntegrityOutbox.dedupe_key == dedupe_key)
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def failed_for_case(self, case_id: str, limit: int = 100) -> list[IntegrityOutbox]:
         stmt = (
             select(IntegrityOutbox)
