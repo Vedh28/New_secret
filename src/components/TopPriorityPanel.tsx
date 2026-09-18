@@ -32,9 +32,15 @@ function calculatePriority(marker: CaseMarker, leadRisk: number | null): number 
   return Math.min(100, Math.round(base + active + locations + entities + observations + sources + unresolvedLead + leadSignal));
 }
 
-function topLead(marker: CaseMarker, graphNodes: ReturnType<typeof useBackendStore.getState>["graph"]["nodes"]): { name: string; risk: number | null; reason: string } {
+function topLead(
+  marker: CaseMarker,
+  graphNodes: ReturnType<typeof useBackendStore.getState>["graph"]["nodes"],
+  offline: boolean,
+): { name: string; risk: number | null; reason: string } {
   const graphById = new Map(graphNodes.map((node) => [node.id, node]));
-  const prototypeById = new Map(prototypeEntities.map((entity) => [entity.id, entity]));
+  // Demo entity names are a legit OFFLINE fallback only; a live case must never
+  // resolve through synthetic names.
+  const prototypeById = offline ? new Map(prototypeEntities.map((entity) => [entity.id, entity])) : new Map();
   const candidates = marker.locations.flatMap((location) => location.entityIds.map((id, index) => ({
     id,
     displayName: location.entityNames?.[index] ?? location.entityNames?.[0],
@@ -61,12 +67,13 @@ export function TopPriorityPanel() {
   const markers = useMapStore((state) => state.markers);
   const selectedCaseId = useMapStore((state) => state.selectedCaseId);
   const graphNodes = useBackendStore((state) => state.graph.nodes);
+  const backendMode = useBackendStore((state) => state.mode);
   const [flippedCase, setFlippedCase] = useState<string | null>(null);
 
   const priorities = useMemo<PriorityItem[]>(() => markers.map((marker) => {
-    const lead = topLead(marker, graphNodes);
+    const lead = topLead(marker, graphNodes, backendMode !== "backend");
     return { marker, score: calculatePriority(marker, lead.risk), leadName: lead.name, leadRisk: lead.risk, leadReason: lead.reason };
-  }).sort((a, b) => b.score - a.score || b.marker.locations.length - a.marker.locations.length).slice(0, 3), [graphNodes, markers]);
+  }).sort((a, b) => b.score - a.score || b.marker.locations.length - a.marker.locations.length).slice(0, 3), [graphNodes, markers, backendMode]);
 
   if (!markers.length) return null;
 

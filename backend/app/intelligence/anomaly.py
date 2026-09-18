@@ -9,18 +9,26 @@ only — never criminality.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.intelligence.models import Anomaly, CaseData, RelData
 
 
 def _parse(value: str) -> datetime | None:
+    """Parse an ISO timestamp, normalizing timezone-aware values to UTC-naive.
+
+    Mixed naive/aware timestamps across sources otherwise raise TypeError on
+    naive/aware comparison; normalizing to a single UTC clock avoids that.
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace(" ", "T"))
-    except ValueError:
+        dt = datetime.fromisoformat(str(value).replace(" ", "T"))
+    except (ValueError, TypeError):
         return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _hour(value: str) -> str | None:

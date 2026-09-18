@@ -102,7 +102,7 @@ export const prototypeAlerts: AlertRead[] = [
 
 const puneIntelligence: CaseIntelligence = {
   case_id: 2,
-  evidence_fusion: {}, evidence: [],
+  evidence_fusion: {}, evidence: [], entities: [], relationships: [],
   temporal_changes: puneEventSpecs.map((event) => ({ kind: event.type, source: event.entityIds[0], target: event.entityIds[1] ?? "", window: event.timestamp, before: 0, after: 1, score: 70, explanation: event.description })),
   anomalies: [
     { kind: "HIT_AND_RUN", entity_id: "Deepak", baseline: 0, observed: 1, deviation: 100, score: 90, timestamp: "2026-09-05T08:20:00Z", evidence: ["FIR and CCTV lead"], explanation: "The working case narrative links Deepak to a hit-and-run near Budhwar Peth; independent confirmation is pending." },
@@ -120,7 +120,7 @@ const puneIntelligence: CaseIntelligence = {
 
 export const prototypeIntelligence: CaseIntelligence = {
   case_id: 1,
-  evidence_fusion: {}, evidence: [],
+  evidence_fusion: {}, evidence: [], entities: [], relationships: [],
   temporal_changes: eventSpecs.map((event) => ({ kind: event.type, source: event.entityIds[0], target: event.entityIds[1] ?? "", window: event.timestamp, before: 0, after: 1, score: 70, explanation: event.description })),
   anomalies: [
     { kind: "UNKNOWN_MEMBERS", entity_id: "Guddu", baseline: 0, observed: 2, deviation: 100, score: 94, timestamp: "2026-09-03T13:40:00Z", evidence: ["Guddu disclosure statement"], explanation: "Two additional members were disclosed but remain unverified." },

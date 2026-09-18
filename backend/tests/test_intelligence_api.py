@@ -73,11 +73,34 @@ def test_leads_crud(ctx) -> None:
     )
     assert lead.status_code == 201, lead.text
     lid = lead.json()["id"]
-    assert lead.json()["status"] == "NEW"
 
-    patch = client.patch(f"/api/v1/cases/{ctx['cn']}/leads/{lid}", json={"status": "CONFIRMED"}, headers=auth)
+    # Canonical status model (P1-5): fresh hypothesis starts POTENTIAL.
+    assert lead.json()["status"] == "POTENTIAL"
+
+    # Only explicit analyst transitions reach ANALYST_CONFIRMED.
+    patch = client.patch(
+        f"/api/v1/cases/{ctx['cn']}/leads/{lid}",
+        json={"status": "ANALYST_CONFIRMED"},
+        headers=auth,
+    )
     assert patch.status_code == 200
-    assert patch.json()["status"] == "CONFIRMED"
+    assert patch.json()["status"] == "ANALYST_CONFIRMED"
+
+    patch2 = client.patch(
+        f"/api/v1/cases/{ctx['cn']}/leads/{lid}",
+        json={"status": "REJECTED"},
+        headers=auth,
+    )
+    assert patch2.status_code == 200
+    assert patch2.json()["status"] == "REJECTED"
+
+    # Legacy vocabulary is rejected by the canonical schema.
+    legacy = client.patch(
+        f"/api/v1/cases/{ctx['cn']}/leads/{lid}",
+        json={"status": "DISMISSED"},
+        headers=auth,
+    )
+    assert legacy.status_code == 422
 
     ls = client.get(f"/api/v1/cases/{ctx['cn']}/leads", headers=auth)
     assert ls.status_code == 200

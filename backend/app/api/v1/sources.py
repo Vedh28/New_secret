@@ -94,9 +94,17 @@ async def process_source(
     from app.api.v1.intelligence import invalidate_case_cache
     invalidate_case_cache(case_id)
     # Refresh the graph projection for this case so newly extracted entities
-    # and relationships are visible immediately (P0.4 post-ingestion pipeline).
+    # and relationships are visible immediately (P0.4/P1-10 pipeline). Any
+    # failure here aborts the commit so Postgres and the projection stay
+    # coherent — the caller sees a clear error, never a silently "ready" state.
     from app.services.graph_materializer import GraphMaterializer
-    graph_summary = await GraphMaterializer(session, store).materialize_case(case_id)
+    try:
+        graph_summary = await GraphMaterializer(session, store).materialize_case(case_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Source processed but the graph refresh failed; the transaction was rolled back. Fix the graph store and retry.",
+        ) from exc
     await _audit(session, user, "source_processed", source_id, {
         "case_key": case_key,
         "records": result["record_count"],
@@ -107,7 +115,13 @@ async def process_source(
         "extraction_provider": result["metrics"].get("extraction_provider", "deterministic"),
     })
     await session.commit()
-    return SourceProcessResult(**result)
+    metrics = {
+        **result["metrics"],
+        "graph_refreshed": True,
+        "graph_entities": graph_summary["entities"],
+        "graph_edges": graph_summary["edges"],
+    }
+    return SourceProcessResult(**{**result, "metrics": metrics})
 
 
 @router.delete(

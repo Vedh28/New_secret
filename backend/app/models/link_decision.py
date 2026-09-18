@@ -16,8 +16,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 from app.models.base_types import BigSerialId, JsonType
 
-# Explicit, analyst-facing lifecycle states for a potential relationship.
-LINK_STATUSES = ("OBSERVED", "DERIVED", "POTENTIAL", "ANALYST_CONFIRMED", "REJECTED", "DEFERRED")
+# Canonical analyst-facing lifecycle states for a potential relationship.
+from app.intelligence.status import LINK_STATUSES  # noqa: F401  (re-exported for callers)
 
 
 class PotentialLinkDecision(Base):

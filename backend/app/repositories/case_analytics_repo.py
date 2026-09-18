@@ -65,40 +65,87 @@ async def build_case_data(session: AsyncSession, case_id: int) -> CaseData:
     for source in sources:
         meta = source.metadata_json or {}
         reliability = SOURCE_RELIABILITY.get(source.source_type or "OTHER", 0.5)
+        provenance = meta.get("provenance") or []
         text = str(meta.get("text") or "")
-        if text:
-            evidence.append(
-                Evidence(
-                    id=source.source_id,
-                    source_type=source.source_type or "OTHER",
-                    source_id=source.source_id,
-                    timestamp="",
-                    entity_ids=[],
-                    summary=text[:200],
-                    reliability=reliability,
+        record_map = {str(p.get("record_id")): p for p in provenance}
+
+        if provenance:
+            # Record-level provenance: each extracted record becomes evidence
+            # carrying the record id and the entity ids it actually produced.
+            for rec in meta.get("records") or []:
+                record_id = str(rec.get("id") or "")
+                prov = record_map.get(record_id)
+                entity_ids = list(prov.get("entity_ids") or []) if prov else []
+                entity_ids = entity_ids or [
+                    str(v) for v in (
+                        (rec.get("fields") or {}).get("caller_phone"), (rec.get("fields") or {}).get("receiver_phone"),
+                        (rec.get("fields") or {}).get("sender"), (rec.get("fields") or {}).get("receiver"),
+                        (rec.get("fields") or {}).get("vehicle"), (rec.get("fields") or {}).get("owner"),
+                        (rec.get("fields") or {}).get("entity"), (rec.get("fields") or {}).get("location"),
+                    ) if v
+                ]
+                evidence.append(
+                    Evidence(
+                        id=f"{source.source_id}:{record_id}",
+                        source_type=source.source_type or "OTHER",
+                        source_id=source.source_id,
+                        record_id=record_id,
+                        timestamp=str(prov.get("timestamp") or rec.get("timestamp") or ""),
+                        entity_ids=list(dict.fromkeys(entity_ids)),
+                        summary=str(rec.get("text") or "")[:200] or f"Record {record_id}",
+                        reliability=reliability,
+                    )
                 )
-            )
-        for rec in meta.get("records") or []:
-            fields = rec.get("fields") or {}
-            entity_ids = [
-                str(v) for v in (
-                    fields.get("caller_phone"), fields.get("receiver_phone"),
-                    fields.get("sender"), fields.get("receiver"),
-                    fields.get("vehicle"), fields.get("owner"),
-                    fields.get("entity"), fields.get("location"),
-                ) if v
-            ]
-            evidence.append(
-                Evidence(
-                    id=f"{source.source_id}:{rec.get('id') or ''}",
-                    source_type=source.source_type or "OTHER",
-                    source_id=source.source_id,
-                    timestamp=str(rec.get("timestamp") or ""),
-                    entity_ids=entity_ids,
-                    summary=str(rec.get("text") or "")[:200],
-                    reliability=reliability,
+            if not meta.get("records"):
+                # Free-text source stored as a raw text payload.
+                for prov in provenance:
+                    evidence.append(
+                        Evidence(
+                            id=f"{source.source_id}:{prov.get('record_id', '')}",
+                            source_type=source.source_type or "OTHER",
+                            source_id=source.source_id,
+                            record_id=str(prov.get("record_id", "")),
+                            timestamp=str(prov.get("timestamp") or ""),
+                            entity_ids=list(dict.fromkeys(prov.get("entity_ids") or [])),
+                            summary=str(text or prov.get("record_id") or "")[:200],
+                            reliability=reliability,
+                        )
+                    )
+        else:
+            if text:
+                evidence.append(
+                    Evidence(
+                        id=source.source_id,
+                        source_type=source.source_type or "OTHER",
+                        source_id=source.source_id,
+                        timestamp="",
+                        entity_ids=[],
+                        summary=text[:200],
+                        reliability=reliability,
+                    )
                 )
-            )
+            for rec in meta.get("records") or []:
+                fields = rec.get("fields") or {}
+                entity_ids = [
+                    str(v) for v in (
+                        fields.get("caller_phone"), fields.get("receiver_phone"),
+                        fields.get("sender"), fields.get("receiver"),
+                        fields.get("vehicle"), fields.get("owner"),
+                        fields.get("entity"), fields.get("location"),
+                    ) if v
+                ]
+                evidence.append(
+                    Evidence(
+                        id=f"{source.source_id}:{rec.get('id') or ''}",
+                        source_type=source.source_type or "OTHER",
+                        source_id=source.source_id,
+                        record_id=str(rec.get("id") or ""),
+                        timestamp=str(rec.get("timestamp") or ""),
+                        entity_ids=entity_ids,
+                        summary=str(rec.get("text") or "")[:200],
+                        reliability=reliability,
+                    )
+                )
 
     # Deduplicate evidence ids.
     seen: set[str] = set()

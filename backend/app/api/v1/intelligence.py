@@ -112,11 +112,7 @@ async def _load_case_data(session, case_id):
     return await build_case_data(session, case_id)
 
 
-_DECISION_TO_STATUS = {
-    "CONFIRM": "ANALYST_CONFIRMED",
-    "REJECT": "REJECTED",
-    "DEFER": "DEFERRED",
-}
+from app.intelligence.status import ANALYST_DECISION_TO_STATUS as _DECISION_TO_STATUS  # noqa: E402
 
 
 @router.get(

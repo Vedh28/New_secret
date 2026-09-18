@@ -36,7 +36,7 @@ class LeadService:
             description=payload.description,
             priority=payload.priority,
             info_gain=payload.info_gain,
-            status="NEW",
+            status=payload.status,  # canonical hypothesis status (default POTENTIAL)
             entity_ids=payload.entity_ids,
             evidence_ids=payload.evidence_ids,
             recommended_action=payload.recommended_action,

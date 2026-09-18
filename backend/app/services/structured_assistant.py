@@ -1,16 +1,22 @@
-"""Structured intelligence assistant (Task 5-6).
+"""Structured intelligence assistant (Task 5-6, hardened).
 
-Routes a natural-language investigation question to a response TYPE and builds
-a STRUCTURED intelligence object (key findings, entities, relationships,
-anomalies, evidence, gaps, next-best-action) from the case intelligence
-engines — never a flat text paragraph. Keeps a readable `summary` for display.
+The assistant is a THIN PRESENTATION layer over the canonical case
+intelligence snapshot produced by CaseIntelligenceService. It never recalculates
+anomalies / DNA / potential links / gaps itself and never ingests offline demo
+maps for a live case.
+
+Behavior contract (P0-1):
+
+    LIVE CASE FOUND      -> answers from the persisted case snapshot
+    CASE DOES NOT EXIST  -> explicit "case not found" response (found=False)
+    BACKEND FAILURE      -> AssistantDataUnavailable raised (never demo data)
+    OFFLINE DEMO MODE    -> explicitly built synthetic snapshot
 """
 from __future__ import annotations
 
 import re
 
 from app.intelligence.models import CaseData
-from app.intelligence.offline import build_demo_case
 from app.schemas.assistant import (
     AssistantEntity,
     AssistantRecommendation,
@@ -20,6 +26,14 @@ from app.schemas.assistant import (
 )
 
 _ENTITY_RE = re.compile(r"([povaln]\-\d{3,})", re.IGNORECASE)
+
+
+class AssistantDataUnavailable(RuntimeError):
+    """The assistant cannot answer because required case data is unavailable.
+
+    Raised on backend/data availability failures — the caller decides the HTTP
+    response. It is deliberately NOT swallowed into demo data.
+    """
 
 
 def _intent(q: str) -> str:
@@ -44,177 +58,268 @@ def _intent(q: str) -> str:
     return "GENERAL_INVESTIGATION_QUERY"
 
 
+def case_data_from_intel(intel: dict) -> CaseData:
+    """Reconstruct the engine's CaseData from a canonical intelligence snapshot."""
+    return CaseData(
+        case_number="",
+        entities=list(intel.get("entities", [])),
+        relationships=list(intel.get("relationships", [])),
+        evidence=list(intel.get("evidence", [])),
+    )
+
+
+def offline_intelligence_snapshot() -> tuple[CaseData, dict]:
+    """Explicit offline/demo snapshot using the same engine as live mode."""
+    from app.intelligence.offline import build_demo_case
+    from app.services.case_intelligence_service import compute_from_data
+
+    data = build_demo_case()
+    return data, compute_from_data(case_id=-1, data=data, link_decisions={})
+
+
 class StructuredAssistant:
-    """Evidence-grounded, type-aware question answering."""
+    """Evidence-grounded, type-aware question answering over one case snapshot."""
 
     def __init__(self, session, store, case_intel: dict | None = None) -> None:
         self._session = session
         self._store = store
-        self._case_intel = case_intel  # optional dict from CaseIntelligenceService
         self._case_key: str | None = None
 
-    async def answer(self, question: str, case_key: str | None = None) -> IntelligenceResponse:
-        self._case_key = case_key
-        q = question
-        intent = _intent(q.lower())
-        data = await self._load_case_data()
-        return self._build(question, intent, data)
+    async def answer(
+        self,
+        question: str,
+        case_key: str | None = None,
+        intel: dict | None = None,
+        case_data: CaseData | None = None,
+        offline: bool = False,
+    ) -> IntelligenceResponse:
+        """Answer from ONE explicit source: live snapshot or offline demo.
 
-    async def _load_case_data(self) -> CaseData:
-        """Load persisted case data when a case_key is provided.
-
-        Falls back to the deterministic offline demo case when:
-        - no case_key is given
-        - the case cannot be resolved from the database
-        - the session is unavailable
+        Live mode never touches demo data. Demo mode is only reached when
+        `offline=True` is passed explicitly.
         """
-        if self._case_key:
-            try:
-                from app.repositories.case_analytics_repo import build_case_data
-                from app.repositories.case_repository import CaseRepository
+        self._case_key = case_key
+        intent = _intent(question.lower())
 
-                repo = CaseRepository(self._session)
-                case = await repo.get_by_case_number(self._case_key)
-                if case is None and self._case_key.isdigit():
-                    case = await repo.get(int(self._case_key))
-                if case is not None:
-                    return await build_case_data(self._session, case.id)
-            except Exception:  # noqa: BLE001 - graceful fallback when DB is unavailable
-                pass
-        return build_demo_case()
+        if offline:
+            self._data, self._intel = offline_intelligence_snapshot()
+        elif intel is not None and case_data is not None:
+            self._intel = intel
+            self._data = case_data
+        else:
+            raise AssistantDataUnavailable(
+                "Live assistant requires a loaded case intelligence snapshot; none was provided."
+            )
 
-    def _build(self, question: str, intent: str, data: CaseData) -> IntelligenceResponse:
+        return self._build(question, intent)
+
+    def _build(self, question: str, intent: str) -> IntelligenceResponse:
         match = _ENTITY_RE.search(question)
         entity_id = match.group(1).upper() if match else None
-        entity = data.entity(entity_id) if entity_id else None
+        entity = self._data.entity(entity_id) if entity_id else None
 
         if entity_id is not None and entity is None:
-            # The referenced entity is not present in the selected case's data.
-            return IntelligenceResponse(
-                type="ENTITY_QUERY",
-                query=question,
-                summary=f"No supporting evidence found in the selected case for {entity_id}. "
-                        "The case may not contain a record naming it.",
-                found=False,
-            )
+            return self._not_found(question, entity_id)
         if entity is not None and intent in ("ENTITY_QUERY", "RELATIONSHIP_QUERY"):
-            return self._entity_response(question, entity, data)
+            return self._entity_response(question, entity)
         if intent == "POTENTIAL_LINK_QUERY":
-            return self._potential_response(question, data)
+            return self._potential_response(question)
         if intent == "ANOMALY_QUERY":
-            return self._anomaly_response(question, data)
+            return self._anomaly_response(question)
+        if intent == "LOCATION_QUERY":
+            return self._location_response(question)
+        if intent == "TIMELINE_QUERY":
+            return self._timeline_response(question)
+        if intent == "EVIDENCE_QUERY":
+            return self._evidence_response(question)
         if intent == "RECOMMENDATION_QUERY" or intent == "CASE_QUERY":
-            return self._case_response(question, data)
-        return self._case_response(question, data)
+            return self._case_response(question)
+        return self._case_response(question)
 
-    def _entity_response(self, question: str, entity, data: CaseData) -> IntelligenceResponse:
+    def _not_found(self, question: str, entity_id: str) -> IntelligenceResponse:
+        return IntelligenceResponse(
+            type="ENTITY_QUERY",
+            query=question,
+            summary=f"No supporting evidence found in the selected case for {entity_id}. "
+                    "The case may not contain a record naming it.",
+            found=False,
+        )
+
+    def _entity_response(self, question: str, entity) -> IntelligenceResponse:
+        data = self._data
         neighbors = data.neighbors(entity.id)
         rels = [r for r in data.relationships if r.source == entity.id or r.target == entity.id]
-        response = IntelligenceResponse(
+        related_evidence = [e for e in data.evidence if entity.id in e.entity_ids]
+        return IntelligenceResponse(
             type="ENTITY_QUERY",
             query=question,
             summary=f"{entity.id} ({entity.name}) is a '{entity.type}' entity with "
-                    f"{len(neighbors)} direct connection(s) and {len(rels)} recorded relationship(s).",
+                    f"{len(neighbors)} direct connection(s), {len(rels)} recorded relationship(s) "
+                    f"and {len(related_evidence)} evidence reference(s).",
             key_findings=[
                 KeyFinding(label="Entity type", detail=entity.type),
                 KeyFinding(label="Direct connections", detail=str(len(neighbors))),
                 KeyFinding(label="Relationship count", detail=str(len(rels))),
-                KeyFinding(label="Aliases", detail=", ".join(entity.aliases) if entity.aliases else "—"),
+                KeyFinding(label="Evidence references", detail=str(len(related_evidence))),
             ],
             entities=[AssistantEntity(id=entity.id, type=entity.type, name=entity.name)],
             relationships=[
                 AssistantRelItem(source=r.source, target=r.target, kind="CONFIRMED", confidence=r.confidence)
                 for r in rels[:8]
-            ] + self._potential_links(entity.id, data),
-            evidence=[f"{e.source_id} ({e.source_type}) — {e.summary[:80]}" for e in data.evidence
-                      if entity.id in e.entity_ids][:6],
-            source_ids=[e.source_id for e in data.evidence if entity.id in e.entity_ids][:8],
+            ] + self._potential_links(entity.id),
+            evidence=[f"{e.source_id} ({e.source_type}) — {e.summary[:80]}" for e in related_evidence][:6],
+            source_ids=[e.source_id for e in related_evidence][:8],
             found=True,
         )
-        return response
 
-    def _potential_response(self, question: str, data: CaseData) -> IntelligenceResponse:
-        from app.intelligence.potential_links import discover
-        links = discover(data, top_k=5)
+    def _potential_response(self, question: str) -> IntelligenceResponse:
+        links = [link for link in self._intel.get("potential_links", [])]
         return IntelligenceResponse(
             type="POTENTIAL_LINK_QUERY",
             query=question,
             summary=f"{len(links)} potential relationship(s) identified (not directly observed).",
-            key_findings=[KeyFinding(label=f"{l.source}-{l.target}", detail=f"{l.score:.0f}% — {', '.join(l.supporting_signals[:2])}")
-                          for l in links[:5]] if links else [],
+            key_findings=[
+                KeyFinding(label=f"{l['source']}-{l['target']}",
+                           detail=f"{l.get('score', 0):.0f}% — {', '.join(l.get('supporting_signals', [])[:2])}")
+                for l in links[:5]
+            ] if links else [],
             relationships=[
-                AssistantRelItem(source=l.source, target=l.target, kind="POTENTIAL", confidence=l.confidence)
+                AssistantRelItem(source=l["source"], target=l["target"], kind="POTENTIAL",
+                                 confidence=l.get("confidence", 0.0))
                 for l in links[:5]
             ],
-            evidence_gaps=[f"No direct communication evidence for {l.source}-{l.target}" for l in links[:5]],
+            evidence=[", ".join(l.get("evidence_ids", [])) for l in links[:5]
+                      if l.get("evidence_ids")],
+            evidence_gaps=[
+                f"No direct communication evidence for {l['source']}-{l['target']}"
+                for l in links[:5]
+                if any("direct communication" in c for c in l.get("contradictory_signals", []))
+            ],
+            source_ids=list({sid for l in links for sid in l.get("evidence_ids", [])}),
             found=bool(links),
         )
 
-    def _anomaly_response(self, question: str, data: CaseData) -> IntelligenceResponse:
-        from app.intelligence.anomaly import detect_all
-        from app.intelligence.offline import location_observations
-        ans = detect_all(data, location_observations())
+    def _anomaly_response(self, question: str) -> IntelligenceResponse:
+        ans = self._intel.get("anomalies", [])
         return IntelligenceResponse(
             type="ANOMALY_QUERY",
             query=question,
-            summary=f"{len(ans)} unusual investigative signal(s) detected.",
-            anomalies=[f"{a.kind} {a.entity_id} — {a.explanation}" for a in ans[:6]],
+            summary=f"{len(ans)} unusual investigative signal(s) detected for the selected case.",
+            anomalies=[f"{a.get('kind')} {a.get('entity_id', '')} — {a.get('explanation', '')}"
+                       for a in ans[:6]],
+            source_ids=list({sid for a in ans for sid in a.get("evidence", [])}),
             found=bool(ans),
         )
 
-    def _case_response(self, question: str, data: CaseData) -> IntelligenceResponse:
-        from app.intelligence import anomaly, dna, gaps, potential_links
-        from app.intelligence.offline import location_observations
-        import networkx as nx
+    def _location_response(self, question: str) -> IntelligenceResponse:
+        from app.intelligence.locations import case_location_observations
 
-        graph = nx.Graph()
-        for e in data.entities:
-            graph.add_node(e.id, type=e.type)
-        for r in data.relationships:
-            graph.add_edge(r.source, r.target, type=r.rel_type)
+        observations = case_location_observations(self._data)
+        locations = self._data
+        top = sorted(observations.items(), key=lambda kv: -kv[1])[:8]
+        return IntelligenceResponse(
+            type="LOCATION_QUERY",
+            query=question,
+            summary=f"{len(observations)} location(s) with recorded observations in this case.",
+            key_findings=[
+                KeyFinding(label=name, detail=f"{count} observation{'s' if count != 1 else ''}")
+                for name, count in top
+            ],
+            entities=[
+                AssistantEntity(id=e.id, type=e.type, name=e.name)
+                for e in locations.entities if e.type.upper() == "LOCATION"
+            ][:10],
+            found=bool(observations),
+        )
 
-        links = potential_links.discover(data, top_k=3)
-        gaps_list = gaps.gaps_for_potential_links(data, links)
-        gene = dna.compute_dna(graph, data)
-        ans = anomaly.detect_all(data, location_observations())
+    def _timeline_response(self, question: str) -> IntelligenceResponse:
+        changes = self._intel.get("temporal_changes", [])
+        emerging = [c for c in changes if c.get("kind") == "EMERGING_BRIDGE"]
+        return IntelligenceResponse(
+            type="TIMELINE_QUERY",
+            query=question,
+            summary=f"{len(changes)} temporal change(s) observed for this case, "
+                    f"including {len(emerging)} emerging bridge signal(s).",
+            key_findings=[
+                KeyFinding(label=f"{c.get('kind')} {c.get('source', '')}",
+                           detail=c.get("explanation", ""))
+                for c in changes[:6]
+            ],
+            found=bool(changes),
+        )
+
+    def _evidence_response(self, question: str) -> IntelligenceResponse:
+        evidence = self._data.evidence
+        return IntelligenceResponse(
+            type="EVIDENCE_QUERY",
+            query=question,
+            summary=f"{len(evidence)} evidence record(s) linked to this case.",
+            evidence=[f"{e.source_id} ({e.source_type}) — {e.summary[:100]}" for e in evidence][:10],
+            source_ids=list({e.source_id for e in evidence}),
+            found=bool(evidence),
+        )
+
+    def _case_response(self, question: str) -> IntelligenceResponse:
+        intel = self._intel
+        dna = intel.get("network_dna", {})
+        links = intel.get("potential_links", [])
+        gaps = intel.get("evidence_gaps", [])
+        ans = intel.get("anomalies", [])
+        recommendations = intel.get("recommendations", [])
+        decisions = intel.get("link_decisions", {})
+
+        summary = (f"Case intelligence: {len(intel.get('entities', []))} entities, "
+                   f"{len(intel.get('relationships', []))} relationships, "
+                   f"{dna.get('community_count', 0)} communities, "
+                   f"bridge dependence {dna.get('bridge_dependence', 'LOW')}, "
+                   f"{len(ans)} anomalies, {len(links)} potential links, "
+                   f"{len(gaps)} evidence gaps.")
+        confirmed = [k for k, v in decisions.items() if v.get("new_status") == "ANALYST_CONFIRMED"]
 
         nba = None
-        if links:
-            top = links[0]
+        if recommendations:
+            top = recommendations[0]
             nba = AssistantRecommendation(
-                kind="RELATIONSHIP",
-                subject=f"{top.source}<->{top.target}",
-                priority=top.score,
-                info_gain=min(100.0, top.score),
-                reasoning=top.supporting_signals[:3],
-                recommended_data="CDR and location records between the pair",
-                window="review the potential relationship",
+                kind=top.get("kind", ""), subject=top.get("subject", ""),
+                priority=top.get("priority", 0.0), info_gain=top.get("info_gain", 0.0),
+                reasoning=top.get("reasoning", []), recommended_data=top.get("recommended_data", ""),
+                window=top.get("window", ""),
             )
 
         return IntelligenceResponse(
             type="CASE_QUERY",
             query=question,
-            summary=f"Case intelligence: {len(data.entities)} entities, {len(data.relationships)} relationships, "
-                    f"{gene.community_count} communities, bridge dependence {gene.bridge_dependence}, "
-                    f"{len(ans)} anomalies, {len(links)} potential links, {len(gaps_list)} evidence gaps.",
+            summary=summary,
             key_findings=[
-                KeyFinding(label="Network DNA — density", detail=f"{gene.density:.2f}"),
-                KeyFinding(label="Bridge dependence", detail=gene.bridge_dependence),
-                KeyFinding(label="Communities", detail=str(gene.community_count)),
-                KeyFinding(label="Evidence coverage", detail=f"{gene.evidence_coverage}%"),
+                KeyFinding(label="Network DNA — density", detail=f"{dna.get('density', 0):.2f}"),
+                KeyFinding(label="Bridge dependence", detail=dna.get("bridge_dependence", "LOW")),
+                KeyFinding(label="Communities", detail=str(dna.get("community_count", 0))),
+                KeyFinding(label="Evidence coverage", detail=f"{dna.get('evidence_coverage', 0)}%"),
+                KeyFinding(label="Analyst confirmed links", detail=str(len(confirmed))),
             ],
-            entities=[AssistantEntity(id=e.id, type=e.type, name=e.name) for e in data.entities][:10],
-            anomalies=[f"{a.kind} {a.entity_id}" for a in ans[:5]],
-            evidence_gaps=[g.subject for g in gaps_list[:5]],
+            entities=[
+                AssistantEntity(id=e.id, type=e.type, name=e.name,
+                                priority=_entity_priority(intel, e.id))
+                for e in self._data.entities
+            ][:10],
+            anomalies=[f"{a.get('kind')} {a.get('entity_id', '')}" for a in ans[:5]],
+            evidence_gaps=[g.get("subject", "") for g in gaps[:5]],
             next_best_action=nba,
-            source_ids=list({e.source_id for e in data.evidence}),
+            source_ids=list({e.source_id for e in self._data.evidence}),
             found=True,
         )
 
-    def _potential_links(self, entity_id: str, data: CaseData) -> list[AssistantRelItem]:
-        from app.intelligence.potential_links import discover
-        links = discover(data, top_k=8)
+    def _potential_links(self, entity_id: str) -> list[AssistantRelItem]:
         return [
-            AssistantRelItem(source=l.source, target=l.target, kind="POTENTIAL", confidence=l.confidence)
-            for l in links if entity_id in (l.source, l.target)
+            AssistantRelItem(source=l["source"], target=l["target"], kind="POTENTIAL",
+                             confidence=l.get("confidence", 0.0))
+            for l in self._intel.get("potential_links", [])
+            if entity_id in (l["source"], l["target"])
         ]
+
+
+def _entity_priority(intel: dict, entity_id: str) -> float:
+    for p in intel.get("entity_priorities", []):
+        if p.get("subject") == entity_id:
+            return float(p.get("priority", 0.0))
+    return 0.0

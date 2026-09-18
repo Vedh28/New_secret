@@ -1,15 +1,16 @@
-"""P0.1: the structured assistant must answer against the SELECTED case."""
+"""P0-1: assistant must answer against the SELECTED case — never silently
+fall back to demo data during a live request."""
 from __future__ import annotations
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import Base
-from app.graph.memory_store import MemoryGraphStore
 from app.models.case import Case, CasePriority, CaseStatus
 from app.models.entity import Entity, EntityRelationship
 from app.models.source import Source
-from app.services.structured_assistant import StructuredAssistant
+from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.structured_assistant import AssistantDataUnavailable, StructuredAssistant, case_data_from_intel
 
 
 async def _seed(S) -> dict:
@@ -53,8 +54,12 @@ async def case_ctx():
 async def test_assistant_binds_to_selected_case(case_ctx) -> None:
     ctx, S = case_ctx
     async with S() as session:
-        sa = StructuredAssistant(session, MemoryGraphStore())
-        res = await sa.answer("show connections of P-9901", case_key=ctx["case_key"])
+        intel = await CaseIntelligenceService(session).build(ctx["case_id"])
+        sa = StructuredAssistant(session, None)
+        res = await sa.answer(
+            "show connections of P-9901", case_key=ctx["case_key"],
+            intel=intel, case_data=case_data_from_intel(intel),
+        )
 
     # The answer must reference the SELECTED case's entities, not the demo corpus.
     assert res.found is True
@@ -64,10 +69,35 @@ async def test_assistant_binds_to_selected_case(case_ctx) -> None:
     assert "P-0421" not in {e.id for e in res.entities}  # demo entity must be absent
 
 
-async def test_assistant_without_case_falls_back_to_demo(case_ctx) -> None:
+async def test_assistant_without_snapshot_raises(case_ctx) -> None:
+    """A live call with no snapshot must fail loudly instead of demo data."""
+    ctx, S = case_ctx
+    async with S() as session:
+        sa = StructuredAssistant(session, None)
+        with pytest.raises(AssistantDataUnavailable):
+            await sa.answer("what should I investigate next", case_key=ctx["case_key"])
+
+
+async def test_assistant_explicit_offline_flag_uses_demo(case_ctx) -> None:
+    """build_demo_case() is ONLY reachable through the explicit offline path."""
     _, S = case_ctx
     async with S() as session:
-        sa = StructuredAssistant(session, MemoryGraphStore())
-        res = await sa.answer("show connections of P-0421")
+        sa = StructuredAssistant(session, None)
+        res = await sa.answer("show connections of P-0421", offline=True)
     assert res.found is True
-    assert any(e.id == "P-0421" for e in res.entities)  # demo corpus used when no case selected
+    assert any(e.id == "P-0421" for e in res.entities)
+
+
+async def test_assistant_entity_not_in_case(case_ctx) -> None:
+    """An entity the selected case does not contain yields a clear not-found."""
+    ctx, S = case_ctx
+    async with S() as session:
+        intel = await CaseIntelligenceService(session).build(ctx["case_id"])
+        sa = StructuredAssistant(session, None)
+        res = await sa.answer(
+            "who is P-9999", case_key=ctx["case_key"],
+            intel=intel, case_data=case_data_from_intel(intel),
+        )
+    assert res.found is False
+    assert "P-9999" in res.summary
+    assert res.entities == []

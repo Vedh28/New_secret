@@ -1,47 +1,29 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { HudPage } from "../components/HudPage";
 import { HudCard, HoloList } from "../components/HudPrimitives";
 import { NetworkGraph } from "../components/NetworkGraph";
 import { PriorityPanel, RecommendationList, PotentialLinksList, TemporalChangesList } from "../components/IntelligenceUi";
 import { useBackendStore } from "../store/backend";
-import { apiCommunities, apiRecordLinkDecision } from "../services/api";
+import { apiRecordLinkDecision } from "../services/api";
 import { useCaseIntelligence } from "../hooks/useCaseIntelligence";
+import { useCaseGraph } from "../hooks/useCaseGraph";
 import { useCaseSelection } from "../services/useCaseSelection";
 
 /**
  * Network Intelligence.
  *
- * The Network Mesh now renders the actual nodes/edges (interactive: zoom, pan,
- * node selection, connected-node + relationship highlighting, reset/fit). The
- * "clusters mapped" chip counts real communities: backend Louvain when online,
- * connected components of the synthetic graph when offline.
+ * STRICTLY CASE-SCOPED: the rendered graph is the selected case's persisted
+ * entities + relationships (`GET /cases/{caseKey}/graph`); community count,
+ * DNA and potential links come from the same case intelligence snapshot.
+ * The global projection is never merged into a case screen.
  */
-function connectedComponents(count: number, edges: { source: string; target: string }[]): number {
-  if (count === 0) return 0;
-  const parent = new Map<string, string>();
-  const find = (x: string): string => {
-    if (!parent.has(x)) parent.set(x, x);
-    let root = x;
-    while (parent.get(root) !== root) root = parent.get(root)!;
-    return root;
-  };
-  const union = (a: string, b: string) => {
-    const ra = find(a); const rb = find(b);
-    if (ra !== rb) parent.set(rb, ra);
-  };
-  for (const e of edges) { find(e.source); find(e.target); union(e.source, e.target); }
-  const withEdges = new Set(edges.flatMap((e) => [e.source, e.target]));
-  return new Set([...parent.keys()].map(find)).size + Math.max(0, count - withEdges.size);
-}
-
 export function NetworkIntel() {
-  const graph = useBackendStore((s) => s.graph);
   const mode = useBackendStore((s) => s.mode);
   const online = mode === "backend";
-  const [clusterCount, setClusterCount] = useState(0);
   const { caseKey } = useCaseSelection();
   const [refreshKey, setRefreshKey] = useState(0);
   const { intel } = useCaseIntelligence(caseKey, refreshKey);
+  const { graph, loading: graphLoading, error: graphError } = useCaseGraph(caseKey, refreshKey);
 
   const decide = async (link: { source: string; target: string }, decision: "CONFIRM" | "REJECT" | "DEFER") => {
     if (!online || !caseKey) return;
@@ -51,17 +33,7 @@ export function NetworkIntel() {
     } catch { /* leave UI as-is on failure */ }
   };
 
-  // Rank nodes by risk to approximate influencer importance.
-  const influencers = useMemo(() => {
-    const scored = graph.nodes.map((node) => ({
-      node,
-      risk: (node.properties?.risk as number) ?? (node.properties?.risk_score as number) ?? 0,
-    }));
-    scored.sort((a, b) => b.risk - a.risk);
-    return scored.slice(0, 4);
-  }, [graph]);
-
-  // Hot nodes: entities with the most connections.
+  // Rank nodes by evidence-linked centrality approximation (degree).
   const hot = useMemo(() => {
     const degree: Record<string, number> = {};
     for (const edge of graph.edges) {
@@ -76,21 +48,24 @@ export function NetworkIntel() {
     return ranked;
   }, [graph]);
 
-  const peopleCount = graph.nodes.filter((node) => node.type?.toUpperCase() === "PERSON").length;
+  // Influencers: highest investigation priority from the case intelligence snapshot.
+  const influencers = useMemo(() => {
+    const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+    return (intel?.entity_priorities ?? [])
+      .filter((p) => byId.has(p.subject))
+      .slice(0, 4)
+      .map((p) => ({ node: byId.get(p.subject)!, priority: p.priority }));
+  }, [intel, graph]);
 
-  // Community count: real Louvain clusters when online, connected components
-  // of the visible graph when offline. Never node count.
-  useEffect(() => {
-    if (online) {
-      apiCommunities()
-        .then((res) => setClusterCount(Number(res.count) || 0))
-        .catch(() => setClusterCount(connectedComponents(graph.nodes.length, graph.edges)));
-      return;
-    }
-    const ids = new Set(graph.nodes.map((n) => n.id));
-    const edges = graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target));
-    setClusterCount(connectedComponents(ids.size, edges));
-  }, [online, graph]);
+  const peopleCount = graph.nodes.filter((node) => node.type?.toUpperCase() === "PERSON").length;
+  const clusterCount = intel?.network_dna?.community_count ?? 0;
+
+  const telemetry = [
+    { label: "Top connected entity", value: hot[0]?.node.name ?? "Awaiting data" },
+    { label: "Evidence coverage", value: `${intel?.network_dna?.evidence_coverage ?? 0}%` },
+    { label: "Communities mapped", value: String(clusterCount) },
+    { label: "People involved", value: String(peopleCount) },
+  ];
 
   return (
     <HudPage
@@ -105,19 +80,20 @@ export function NetworkIntel() {
       <div className="hud-network-layout">
         <HudCard label="Graph overview" title="Network Telemetry" className="hud-network-controls">
           <div className="hud-network-telemetry">
-            <div><span>Top connected entity</span><strong>{hot[0]?.node.name ?? "Awaiting data"}</strong></div>
-            <div><span>Evidence coverage</span><strong>{intel?.network_dna?.evidence_coverage ?? 0}%</strong></div>
-            <div><span>Communities mapped</span><strong>{clusterCount}</strong></div>
-            <div><span>People involved</span><strong>{peopleCount}</strong></div>
+            {telemetry.map((item) => (
+              <div key={item.label}><span>{item.label}</span><strong>{item.value}</strong></div>
+            ))}
           </div>
+          {graphError && <div className="meta" style={{ marginTop: 8, color: "var(--red, #ff5f56)" }}>{graphError}</div>}
         </HudCard>
 
         <HudCard label="Graph surface" title="Network Mesh" className="hud-network-mesh">
           <div className="hud-net-graph">
-            <NetworkGraph
-              nodes={graph.nodes}
-              edges={graph.edges}
-            />
+            {graphLoading && !graph.nodes.length ? (
+              <div className="meta">Loading case graph…</div>
+            ) : (
+              <NetworkGraph nodes={graph.nodes} edges={graph.edges} />
+            )}
           </div>
         </HudCard>
 
@@ -126,7 +102,7 @@ export function NetworkIntel() {
             <HoloList
               items={influencers.map((entry, i) => ({
                 label: `${String(i + 1).padStart(2, "0")}  ${entry.node.name}`,
-                value: entry.risk.toFixed(1),
+                value: entry.priority.toFixed(1),
               }))}
             />
           </HudCard>

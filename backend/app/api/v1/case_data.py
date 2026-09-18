@@ -11,6 +11,7 @@ from app.repositories.case_repository import CaseRepository
 from app.repositories.entity_repository import EntityRepository, RelationshipRepository
 from app.schemas.case_analytics import CommsResponse, LocationsResponse, TimelineEvent, TransResponse
 from app.schemas.entity import EntityRead, EntityUpdate, RelationshipRead
+from app.schemas.graph import GraphEdgeSchema, GraphNodeSchema, GraphResponse
 from app.services.audit_service import AuditService
 from app.services.case_analytics import CaseAnalyticsService
 
@@ -53,6 +54,40 @@ async def list_case_entities(
         )
         for e in rows
     ]
+
+
+@router.get(
+    "/{case_key}/graph",
+    response_model=GraphResponse,
+    summary="Case-scoped network graph (entities + relationships of ONE case)",
+)
+async def case_graph(
+    case_key: str,
+    session: DbSession,
+    _user: CurrentUser,
+) -> GraphResponse:
+    """Return the graph constructed ONLY from this case's persisted data.
+
+    PostgreSQL is the authoritative per-case source; this endpoint never mixes
+    other cases or the global projection into a case screen.
+    """
+    case = await _resolve_case(session, case_key)
+    from app.repositories.case_analytics_repo import build_case_data
+
+    data = await build_case_data(session, case.id)
+    return GraphResponse(
+        nodes=[
+            GraphNodeSchema(id=e.id, type=e.type, name=e.name,
+                            properties={"source_ids": e.source_ids, "attributes": e.metadata})
+            for e in data.entities
+        ],
+        edges=[
+            GraphEdgeSchema(id=f"{r.source}-{r.target}-{r.rel_type}",
+                            source=r.source, target=r.target, type=r.rel_type,
+                            properties={"confidence": r.confidence, "source_ids": r.source_ids})
+            for r in data.relationships
+        ],
+    )
 
 
 @router.patch(

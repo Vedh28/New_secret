@@ -167,7 +167,29 @@ class SourceService:
 
         extraction_provider = get_extraction_provider(get_settings().extraction_provider)
         extraction = extraction_provider.extract(records)
-        entity_map, relationship_map = await self._persist_extraction(case_id, source_id, extraction)
+
+        # Record-level provenance (P1-6): which entity mentions / relationship
+        # keys each record produced. Persisted so evidence drilldown can answer
+        # WHAT / WHY / SOURCE / RECORD / ENTITY / RELATIONSHIP / TIMESTAMP.
+        provenance = []
+        entity_ids_by_record = {}
+        for record in records:
+            per = extraction_provider.extract([record])
+            ids = list({e.entity_id for e in per.entities})
+            entity_ids_by_record[record.record_id] = ids
+            provenance.append({
+                "record_id": record.record_id,
+                "timestamp": record.timestamp,
+                "entity_ids": ids,
+                "entity_names": list({e.name for e in per.entities}),
+                "relationship_keys": [
+                    f"{rel.source_id}|{rel.rel_type}|{rel.target_id}" for rel in per.relationships
+                ],
+            })
+
+        entity_map, relationship_map, record_entity_map = await self._persist_extraction(
+            case_id, source_id, extraction, entity_ids_by_record
+        )
         metrics = {
             "records_processed": len(records),
             "entities_extracted": len(extraction.entities),
@@ -180,7 +202,11 @@ class SourceService:
         source.status = "PROCESSED"
         source.record_count = len(records)
         source.processed_at = datetime.now(timezone.utc)
-        source.metadata_json = {**source.metadata_json, "metrics": metrics}
+        source.metadata_json = {
+            **source.metadata_json,
+            "metrics": metrics,
+            "provenance": provenance,
+        }
         await self._repo.save(source)
 
         return {
@@ -192,8 +218,17 @@ class SourceService:
             "metrics": metrics,
         }
 
-    async def _persist_extraction(self, case_id: int, source_id: str, extraction) -> tuple[dict, dict]:
-        """Persist extracted mentions, merging by (case, identity, type)."""
+    async def _persist_extraction(self, case_id: int, source_id: str, extraction,
+                                  record_entity_ids: dict[str, list[str]] | None = None
+                                  ) -> tuple[dict, dict, dict]:
+        """Persist extracted mentions, merging by (case, identity, type).
+
+        Returns (entity_map, rel_map, record_entity_map) where record_entity_map
+        maps canonical entity id -> set of record ids that produced it.
+        """
+        record_entity_ids = record_entity_ids or {}
+        record_entity_map: dict[str, set[str]] = {}
+
         existing_entities = await self._entities.list_by_case(case_id)
         entity_map = {(e.entity_id, e.entity_type): e for e in existing_entities}
         existing_rels = await self._relationships.list_by_case(case_id)
@@ -217,6 +252,9 @@ class SourceService:
                 row.confidence = max(row.confidence, mention.confidence)
                 _merge_source_ids(row.source_ids, source_id)
                 await self._entities.save(row)
+            for record_id, ids in record_entity_ids.items():
+                if mention.entity_id in ids:
+                    record_entity_map.setdefault(mention.entity_id, set()).add(record_id)
 
         for mention in extraction.relationships:
             rel_type = mention.rel_type.upper()
@@ -241,7 +279,7 @@ class SourceService:
                     row.attributes = _merge_timestamps(row.attributes, mention.timestamp)
                 await self._relationships.save(row)
 
-        return entity_map, rel_map
+        return entity_map, rel_map, record_entity_map
 
 
 def _merge_source_ids(source_ids: list, source_id: str) -> None:

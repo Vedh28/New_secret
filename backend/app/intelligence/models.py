@@ -27,6 +27,7 @@ class Evidence:
     entity_ids: list[str] = field(default_factory=list)
     summary: str = ""
     reliability: float = 0.5      # 0..1 base reliability of the source type
+    record_id: str = ""           # record-level provenance (SOURCE:RECORD)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

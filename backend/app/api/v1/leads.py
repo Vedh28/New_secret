@@ -42,6 +42,7 @@ async def list_leads(case_key: str, session: DbSession, _user: CurrentUser) -> l
 )
 async def create_lead(case_key: str, payload: LeadCreate, session: DbSession, user: CurrentUser) -> LeadRead:
     lead = await LeadService(session).create(case_key, payload, user.id)
+    await _audit_lead(session, user, "lead_created", lead, {"case_key": case_key, "status": lead.status, "kind": lead.kind})
     await session.commit()
     await session.refresh(lead)
     return _to_read(lead)
@@ -56,6 +57,18 @@ async def update_lead(
     case_key: str, lead_id: int, payload: LeadUpdate, session: DbSession, user: CurrentUser
 ) -> LeadRead:
     lead = await LeadService(session).update(case_key, lead_id, payload, user.id)
+    await _audit_lead(session, user, "lead_updated", lead, {"case_key": case_key, "status": lead.status, "notes": payload.notes})
     await session.commit()
     await session.refresh(lead)
     return _to_read(lead)
+
+
+async def _audit_lead(session, user, action: str, lead, result: dict) -> None:
+    """Best-effort audit write for lead lifecycle actions."""
+    try:
+        from app.services.audit_service import AuditService
+        await AuditService(session).record(
+            user, action, object_type="lead", object_id=str(lead.id), result=result
+        )
+    except Exception:  # noqa: BLE001
+        pass

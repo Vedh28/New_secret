@@ -17,17 +17,33 @@ def test_intent_routing() -> None:
     assert _intent("case overview") == "CASE_QUERY"
 
 
-def _run(q: str):
+def _run(q: str, **kwargs):
     sa = StructuredAssistant(None, None)
 
     async def go():
-        return await sa.answer(q)
+        return await sa.answer(q, **kwargs)
 
     return asyncio.run(go())
 
 
+def test_offline_mode_uses_demo_snapshot() -> None:
+    res = _run("show connections of P-0421", offline=True)
+    assert res.found is True
+    assert any(e.id == "P-0421" for e in res.entities)
+
+
+def test_live_without_snapshot_raises_not_demo() -> None:
+    # A live call without a loaded snapshot must FAIL loudly, never return demo.
+    import pytest
+
+    from app.services.structured_assistant import AssistantDataUnavailable
+
+    with pytest.raises(AssistantDataUnavailable):
+        _run("how is the case going?")
+
+
 def test_entity_query_structured() -> None:
-    res = _run("show connections of P-0421")
+    res = _run("show connections of P-0421", offline=True)
     assert res.type == "ENTITY_QUERY"
     assert res.found is True
     assert res.summary
@@ -39,7 +55,7 @@ def test_entity_query_structured() -> None:
 
 
 def test_case_query_has_dna_and_next_action() -> None:
-    res = _run("what should I investigate next")
+    res = _run("what should I investigate next", offline=True)
     assert res.type in ("RECOMMENDATION_QUERY", "CASE_QUERY")
     assert any(k.label == "Network DNA — density" for k in res.key_findings)
     assert res.next_best_action is not None
@@ -47,13 +63,13 @@ def test_case_query_has_dna_and_next_action() -> None:
 
 
 def test_anomaly_query() -> None:
-    res = _run("unusual bursts")
+    res = _run("unusual bursts", offline=True)
     assert res.type == "ANOMALY_QUERY"
     assert res.anomalies
 
 
 def test_potential_link_query() -> None:
-    res = _run("potential hidden links")
+    res = _run("potential hidden links", offline=True)
     assert res.type == "POTENTIAL_LINK_QUERY"
     assert any(r.kind == "POTENTIAL" for r in res.relationships)
     assert res.evidence_gaps

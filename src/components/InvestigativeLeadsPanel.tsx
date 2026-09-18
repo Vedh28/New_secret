@@ -6,7 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import { HudCard } from "./HudPrimitives";
 import { apiCaseLeads, apiCreateLead, apiUpdateLead, type LeadRead, type Recommendation } from "../services/api";
 
-const STATUSES = ["NEW", "REVIEWING", "CONFIRMED", "DISMISSED"];
+// Canonical hypothesis lifecycle shared with potential-link decisions.
+const STATUSES = ["REVIEWING", "ANALYST_CONFIRMED", "REJECTED", "DEFERRED"];
 
 export function InvestigativeLeadsPanel({ caseKey, recommendations }: { caseKey: string; recommendations: Recommendation[] }) {
   const [leads, setLeads] = useState<LeadRead[]>([]);

@@ -6,10 +6,8 @@ from fastapi import APIRouter, Query
 from app.api.deps import CurrentUser, DbSession, GraphStoreDep, RequireAnalyst
 from app.ingestion.generator import generate_synthetic
 from app.schemas.analysis import TemporalLocationResponse
-from app.schemas.assistant import AssistantRequest, AssistantResponse
-from app.schemas.assistant import AssistantRecommendation, KeyFinding
+from app.schemas.assistant import AssistantRequest, AssistantResponse, IntelligenceResponse
 from app.services.analysis_service import TemporalLocationService
-from app.services.structured_assistant import StructuredAssistant
 from app.services.investigation_engine import InvestigationEngine
 from app.services.simulation_service import SimulationService
 
@@ -58,21 +56,58 @@ async def assistant(
     session: DbSession,
     _user: CurrentUser,
 ) -> AssistantResponse:
-    structured = await StructuredAssistant(session, store).answer(payload.question, case_key=payload.case_key)
+    from fastapi import HTTPException, status as http_status
+
+    from app.repositories.case_repository import CaseRepository
+
+    # Live assistant REQUIRES a case. Explicitly resolve it first.
+    repo = CaseRepository(session)
+    case = None
     if payload.case_key:
-        # When a case is requested, pull live case intelligence to enrich the answer.
-        try:
-            from app.services.case_intelligence_service import CaseIntelligenceService
-            from app.repositories.case_repository import CaseRepository
-            repo = CaseRepository(session)
-            case = await repo.get_by_case_number(payload.case_key) or (
-                await repo.get(int(payload.case_key)) if payload.case_key.isdigit() else None
-            )
-            if case is not None:
-                intel = await CaseIntelligenceService(session).build(case.id)
-                structured = await _enrich(structured, intel)
-        except Exception:  # noqa: BLE001 - keep offline fallback on any failure
-            pass
+        case = await repo.get_by_case_number(payload.case_key)
+        if case is None and payload.case_key.isdigit():
+            case = await repo.get(int(payload.case_key))
+
+    if case is None:
+        # CASE DOES NOT EXIST -> explicit response, never demo data.
+        not_found = IntelligenceResponse(
+            type="CASE_QUERY",
+            query=payload.question,
+            summary=(f"Case not found: {payload.case_key or 'none supplied'}. "
+                     "The assistant can only answer for a case that exists."),
+            found=False,
+        )
+        return AssistantResponse(
+            question=payload.question,
+            answer=not_found.summary,
+            source_ids=[],
+            found=False,
+            structured=not_found,
+        )
+
+    try:
+        from app.services.case_intelligence_service import CaseIntelligenceService
+        intel = await CaseIntelligenceService(session).build(case.id)
+    except Exception as exc:  # noqa: BLE001 - backend failure must surface, not become demo
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Intelligence backend unavailable for this case; no data was returned.",
+        ) from exc
+
+    from app.services.structured_assistant import StructuredAssistant, case_data_from_intel
+    structured = await StructuredAssistant(session, store).answer(
+        payload.question, case_key=payload.case_key,
+        intel=intel, case_data=case_data_from_intel(intel),
+    )
+    try:
+        from app.services.audit_service import AuditService
+        await AuditService(session).record(
+            _user, "assistant_query", object_type="case", object_id=payload.case_key,
+            result={"intent": structured.type, "found": structured.found},
+        )
+        await session.commit()
+    except Exception:  # noqa: BLE001 - best-effort audit, never breaks the answer
+        pass
     return AssistantResponse(
         question=payload.question,
         answer=structured.summary,
@@ -80,24 +115,6 @@ async def assistant(
         found=structured.found,
         structured=structured,
     )
-
-
-async def _enrich(structured, intel: dict):
-    """Fold real case-intelligence numbers into the structured response."""
-    if intel.get("network_dna"):
-        structured.key_findings.insert(0, KeyFinding(
-            label="Live network DNA",
-            detail=f"{intel['network_dna'].density:.2f} density",
-        ))
-    if intel.get("recommendations"):
-        top = intel["recommendations"][0]
-        structured.next_best_action = AssistantRecommendation(
-            kind=top.get("kind", ""), subject=top.get("subject", ""),
-            priority=top.get("priority", 0.0), info_gain=top.get("info_gain", 0.0),
-            reasoning=top.get("reasoning", []), recommended_data=top.get("recommended_data", ""),
-            window=top.get("window", ""),
-        )
-    return structured
 
 
 @router.post(

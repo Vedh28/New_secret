@@ -3,7 +3,12 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-LEAD_STATUSES = ("NEW", "REVIEWING", "CONFIRMED", "DISMISSED")
+from app.intelligence.status import HYPOTHESIS_OPEN, LINK_STATUSES
+
+# Canonical hypothesis statuses (shared with potential-link decisions).
+LEAD_STATUSES = LINK_STATUSES
+_OPEN_PATTERN = "^(" + "|".join(HYPOTHESIS_OPEN) + ")$"
+_STATUS_PATTERN = "^(" + "|".join(LINK_STATUSES) + ")$"
 
 
 class LeadCreate(BaseModel):
@@ -14,6 +19,7 @@ class LeadCreate(BaseModel):
     description: str | None = None
     priority: float = Field(default=0.0, ge=0, le=100)
     info_gain: float = Field(default=0.0, ge=0, le=100)
+    status: str = Field(default="POTENTIAL", pattern=_OPEN_PATTERN)
     entity_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
     recommended_action: str | None = None
@@ -24,7 +30,7 @@ class LeadCreate(BaseModel):
 class LeadUpdate(BaseModel):
     """Update a lead (status, notes, review)."""
 
-    status: str | None = Field(default=None, pattern="^(NEW|REVIEWING|CONFIRMED|DISMISSED)$")
+    status: str | None = Field(default=None, pattern=_STATUS_PATTERN)
     notes: str | None = None
     description: str | None = None
 

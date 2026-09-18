@@ -342,6 +342,11 @@ export async function apiListCaseRelationships(caseKey: string): Promise<Relatio
   return request<RelationshipRead[]>(`/api/v1/cases/${encodeURIComponent(caseKey)}/relationships`);
 }
 
+/** Case-scoped network graph: only the selected case's entities + relationships. */
+export async function apiCaseGraph(caseKey: string): Promise<GraphResponse> {
+  return request<GraphResponse>(`/api/v1/cases/${encodeURIComponent(caseKey)}/graph`);
+}
+
 export async function apiMaterializeGraph(): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>("/api/v1/graph/materialize", { method: "POST" });
 }
@@ -597,10 +602,44 @@ export interface TemporalChange {
   explanation: string;
 }
 
+export interface IntelEntity {
+  id: string;
+  type: string;
+  name: string;
+  aliases?: string[];
+  source_ids?: string[];
+  confidence?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntelRel {
+  source: string;
+  target: string;
+  rel_type: string;
+  confidence: number;
+  source_ids?: string[];
+  first_seen?: string;
+  last_seen?: string;
+  [key: string]: unknown;
+}
+
+export interface IntelEvidence {
+  id: string;
+  source_type: string;
+  source_id: string;
+  timestamp?: string;
+  entity_ids?: string[];
+  summary?: string;
+  record_id?: string;
+  [key: string]: unknown;
+}
+
 export interface CaseIntelligence {
   case_id: number;
+  entities: IntelEntity[];
+  relationships: IntelRel[];
+  evidence: IntelEvidence[];
   evidence_fusion: Record<string, unknown>;
-  evidence: unknown[];
   temporal_changes: TemporalChange[];
   anomalies: Anomaly[];
   potential_links: PotentialLink[];

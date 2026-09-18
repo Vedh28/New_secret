@@ -316,7 +316,8 @@ async def _case_intelligence_sections(session: AsyncSession, case) -> list[Repor
     if intel.get("potential_links"):
         rows: list[str] = []
         for link in intel["potential_links"][:10]:
-            decision = (intel.get("link_decisions") or {}).get(f"{link['source']}<->{link['target']}")
+            pair_key = "<->".join(sorted([link["source"], link["target"]]))
+            decision = (intel.get("link_decisions") or {}).get(pair_key)
             status = "POTENTIAL"
             if decision and decision.get("new_status"):
                 status = decision["new_status"]

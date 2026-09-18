@@ -5,6 +5,7 @@ import { HudPage } from "../components/HudPage";
 import { HudCard } from "../components/HudPrimitives";
 import { AnomalyList } from "../components/IntelligenceUi";
 import { useCaseIntelligence } from "../hooks/useCaseIntelligence";
+import { useCaseGraph } from "../hooks/useCaseGraph";
 import { useCaseSelection } from "../services/useCaseSelection";
 import { prototypeEntities } from "../data/prototypeCase";
 import { useMapStore } from "../store/mapStore";
@@ -30,12 +31,12 @@ function parseCoordinate(value: string): number | undefined {
 
 export function EntityExplorer() {
   const backend = useBackendStore((s) => s.mode);
-  const graph = useBackendStore((s) => s.graph);
   const [query, setQuery] = useState("");
   const [profiles, setProfiles] = useState<CriminalProfile[]>([]);
   const [error, setError] = useState<string | null>(null);
   const { caseKey } = useCaseSelection();
   const { intel: caseIntel } = useCaseIntelligence(caseKey);
+  const { graph } = useCaseGraph(caseKey);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resolvedName, setResolvedName] = useState("");
   const [evidenceIds, setEvidenceIds] = useState("");
@@ -75,16 +76,33 @@ export function EntityExplorer() {
         links: entity.relationships,
       }));
     }
-    const map = new Map<string, Row>();
-    for (const p of profiles) {
-      map.set(p.secret_id, { id: p.secret_id, type: p.profile_type, name: p.name, risk: p.risk_score, confidence: p.confidence });
+    // CASE-SCOPED: rows come from the selected case's intelligence entities +
+    // its persisted graph. Profiles only annotate entities present in the case.
+    const profileById = new Map(profiles.map((p) => [p.secret_id, p]));
+    const linkCount = new Map<string, number>();
+    for (const edge of graph.edges) {
+      linkCount.set(edge.source, (linkCount.get(edge.source) ?? 0) + 1);
+      linkCount.set(edge.target, (linkCount.get(edge.target) ?? 0) + 1);
     }
-    for (const n of graph.nodes) {
-      const existing = map.get(n.id);
-      map.set(n.id, { id: n.id, type: n.type, name: resolvedNames[n.id] ?? n.name, risk: typeof existing?.risk === "number" ? existing.risk : undefined, confidence: existing?.confidence ?? undefined, links: graph.edges.filter((e) => e.source === n.id || e.target === n.id).length });
+    const seen = new Set<string>();
+    const out: Row[] = [];
+    for (const entity of caseIntel?.entities ?? []) {
+      const id = entity.id;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const profile = profileById.get(id);
+      const confidenceValue = profile?.confidence ?? (typeof entity.confidence === "number" ? entity.confidence * 100 : undefined);
+      out.push({
+        id,
+        type: entity.type?.toUpperCase() === "ORG" ? "ORGANIZATION" : entity.type,
+        name: resolvedNames[id] ?? entity.name ?? id,
+        risk: profile?.risk_score,
+        confidence: typeof confidenceValue === "number" ? Math.round(confidenceValue) : undefined,
+        links: linkCount.get(id) ?? 0,
+      });
     }
-    return Array.from(map.values());
-  }, [backend, profiles, graph, resolvedNames]);
+    return out;
+  }, [backend, caseIntel, graph, profiles, resolvedNames]);
 
   const filtered = useMemo(
     () => rows
