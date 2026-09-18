@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from numbers import Number
 from typing import Any
+from uuid import UUID
 
 HASH_ALGORITHM = "SHA-256"
 
@@ -27,6 +29,8 @@ def _json_default(value: Any) -> Any:
     """Normalize non-primitive values without losing determinism."""
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if isinstance(value, (UUID, Decimal)):
+        return str(value)
     if isinstance(value, bytes):
         return value.hex()
     return str(value)
@@ -136,15 +140,43 @@ def hash_intelligence_snapshot(snapshot: dict) -> str:
     return hash_json(snapshot_integrity_payload(snapshot))
 
 
+def _normalize_ts(value: Any) -> str:
+    """Stable UTC-naive ISO timestamp so aware/naive or DB-retyped datetimes
+    hash identically across generation and post-restart verification."""
+    text = str(value or "")
+    if not text:
+        return ""
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return text
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.isoformat(timespec="seconds")
+
+
 def report_integrity_payload(report_id: str, report_type: str, title: str,
                              sections: list, generated_at: str = "") -> dict:
-    """Canonical report fingerprint (report content, not raw evidence)."""
+    """Canonical report fingerprint (report content, not raw evidence).
+
+    Accepts either pydantic ReportSection objects or plain {heading, body}
+    dicts so the same hash is produced whether hashing at generation time or
+    re-hashing a persisted report after restart.
+    """
+    normalized: list[dict] = []
+    for section in sections or []:
+        if isinstance(section, dict):
+            normalized.append({"heading": str(section.get("heading", "")),
+                               "body": list(section.get("body", []))})
+        else:
+            normalized.append({"heading": str(getattr(section, "heading", "")),
+                               "body": list(getattr(section, "body", []) or [])})
     return {
-        "report_id": report_id,
-        "report_type": report_type,
-        "title": title,
-        "sections": [{"heading": s.heading, "body": s.body} for s in sections] if sections else [],
-        "generated_at": str(generated_at or ""),
+        "report_id": str(report_id),
+        "report_type": str(report_type),
+        "title": str(title),
+        "sections": normalized,
+        "generated_at": _normalize_ts(generated_at),
     }
 
 
@@ -171,3 +203,24 @@ def hash_decision_payload(*, case_id, entity_a, entity_b, decision,
 def hash_record(record: dict) -> str:
     """Hash one canonical normalized record (deterministic)."""
     return hash_json(record)
+
+
+def canonical_record_payload(record: dict) -> dict:
+    """Deterministic, non-sensitive canonical shape of a stored record dict.
+
+    Mirrors `_canonical_record` in service.py so that hashing and verification
+    stay consistent even if the DB representation drifts. Only stable
+    non-sensitive fields are included.
+    """
+    fields = record.get("fields") or {}
+    return {
+        "id": str(record.get("id", "")),
+        "source_type": str(record.get("source_type", "")),
+        "timestamp": str(record.get("timestamp", "")),
+        "fields": {k: v for k, v in sorted((fields or {}).items())},
+    }
+
+
+def hash_canonical_record(record: dict) -> str:
+    """SH-256 over the canonical representation of one stored record."""
+    return hash_json(canonical_record_payload(record))

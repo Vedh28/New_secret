@@ -172,12 +172,21 @@ class SourceService:
         # Record-level provenance (P1-6): which entity mentions / relationship
         # keys each record produced. Persisted so evidence drilldown can answer
         # WHAT / WHY / SOURCE / RECORD / ENTITY / RELATIONSHIP / TIMESTAMP.
+        from app.blockchain.hashes import canonical_record_payload, hash_canonical_record
         provenance = []
         entity_ids_by_record = {}
+        raw_by_id = {str(r.get("id", "")): r for r in raw_records if isinstance(r, dict)}
         for record in records:
             per = extraction_provider.extract([record])
             ids = list({e.entity_id for e in per.entities})
             entity_ids_by_record[record.record_id] = ids
+            # Canonical shape used by the integrity layer = the stored metadata
+            # record dict (id/source_type/timestamp/fields), so batch hashing in
+            # BlockchainIntegrityService stays byte-identical to this commitment.
+            raw = raw_by_id.get(str(record.record_id)) or {
+                "id": str(record.record_id), "source_type": record.source_type,
+                "timestamp": record.timestamp, "fields": _source_record_fields(record),
+            }
             provenance.append({
                 "record_id": record.record_id,
                 "timestamp": record.timestamp,
@@ -186,6 +195,8 @@ class SourceService:
                 "relationship_keys": [
                     f"{rel.source_id}|{rel.rel_type}|{rel.target_id}" for rel in per.relationships
                 ],
+                "record_hash": hash_canonical_record(raw),
+                "canonical": canonical_record_payload(raw),
             })
 
         entity_map, relationship_map, record_entity_map = await self._persist_extraction(
@@ -328,3 +339,13 @@ def _slugify(filename: str) -> str:
     stem = os.path.splitext(filename)[0]
     slug = re.sub(r"[^A-Za-z0-9]+", "-", stem).strip("-")[:24].upper()
     return slug or "UPLOAD"
+
+
+def _source_record_fields(record) -> dict:
+    """Real record fields of a SourceRecord, matching stored metadata records."""
+    fields = getattr(record, "fields", None) or {}
+    if isinstance(fields, dict):
+        if isinstance(fields.get("fields"), dict):
+            return fields["fields"]
+        return {k: v for k, v in fields.items() if k not in ("id", "timestamp", "text", "fields")}
+    return {} if not isinstance(fields, dict) else fields

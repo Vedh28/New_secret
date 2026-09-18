@@ -384,7 +384,9 @@ export interface IntegritySummary {
   evidence_registered: number;
   evidence_verified: number;
   mismatches: number;
+  registered_snapshots: number;
   verified_snapshots: number;
+  registered_reports: number;
   verified_reports: number;
   latest_block: IntegrityBlock | null;
   issues?: string[];

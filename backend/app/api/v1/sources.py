@@ -1,4 +1,5 @@
 """Case data source endpoints (Phase 2-3)."""
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
@@ -7,6 +8,8 @@ from app.api.deps import CurrentUser, DbSession, GraphStoreDep, RequireAnalyst
 from app.repositories.case_repository import CaseRepository
 from app.schemas.source import SourceCreate, SourceProcessResult, SourceRead, SourceUploadResult
 from app.services.source_service import SourceService
+
+logger = logging.getLogger("secret.integrity")
 
 router = APIRouter()
 
@@ -74,7 +77,8 @@ async def _register_evidence_integrity(session, case_id: int, filename: str, sou
             actor_id=actor_id,
         )
         return registered.get("status", "REGISTERED")
-    except Exception:  # noqa: BLE001 - integrity failure must not break upload
+    except Exception as exc:  # noqa: BLE001 - ledger outage must not break upload
+        logger.warning("evidence registration failed case=%s source=%s: %s", case_id, source_id, exc)
         return "LEDGER_UNAVAILABLE"
 
 
@@ -156,13 +160,34 @@ async def process_source(
         source_row = next((s for s in rows if s.source_id == source_id), None)
         records = [r for r in (source_row.metadata_json or {}).get("records", []) if isinstance(r, dict)]
         batch = await BlockchainIntegrityService(session).register_processed_batch(
-            case_id=case_id, source_id=source_id, source_type=source.source_type or "OTHER",
+            case_id=case_id, source_id=source_id, source_type=source_row.source_type or "OTHER",
             records=records, actor_id=user.id,
             extraction={"entities": result["metrics"].get("entities_persisted", 0),
                         "relationships": result["metrics"].get("relationships_persisted", 0)},
         )
-    except Exception:  # noqa: BLE001 - integrity failure must not break processing
+        # Reflect the ledger commitment on the processed source's provenance so
+        # record-level drilldown can show its batch transaction + block.
+        if source_row is not None and batch.get("transaction_id"):
+            provenance = source_row.metadata_json.get("provenance") or []
+            for item in provenance:
+                item["transaction_id"] = batch["transaction_id"]
+                item["block_index"] = batch["block_index"]
+            source_row.metadata_json = {
+                **source_row.metadata_json,
+                "provenance": provenance,
+                "integrity_tx": batch["transaction_id"],
+                "integrity_block": batch["block_index"],
+                "merkle_root": batch.get("merkle_root"),
+            }
+            await SourceRepository(session).save(source_row)
+        integrity_status = "REGISTERED" if batch.get("transaction_id") else (
+            "PENDING" if batch.get("merkle_root") is not None else "LEDGER_UNAVAILABLE"
+        )
+    except Exception as exc:  # noqa: BLE001 - ledger outage must not break processing
+        logger.warning("processed-batch registration failed case=%s source=%s: %s -> %s",
+                       case_id, source_id, type(exc).__name__, exc)
         batch = {"merkle_root": None}
+        integrity_status = "LEDGER_UNAVAILABLE"
     await session.commit()
     metrics = {
         **result["metrics"],
@@ -170,6 +195,9 @@ async def process_source(
         "graph_entities": graph_summary["entities"],
         "graph_edges": graph_summary["edges"],
         "merkle_root": batch.get("merkle_root"),
+        "integrity_tx": batch.get("transaction_id"),
+        "integrity_block": batch.get("block_index"),
+        "integrity_status": integrity_status,
     }
     return SourceProcessResult(**{**result, "metrics": metrics})
 

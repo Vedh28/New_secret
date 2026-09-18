@@ -1,20 +1,24 @@
-"""Report service (Phase 9).
+"""Report service (P0.2, hardened).
 
-Orchestrates report generation: invokes the appropriate builder from `BUILDERS`,
-renders a PDF preview artifact, and stores the result in an in-memory store.
+Reports are now persisted in PostgreSQL so they survive process restarts and
+integrity verification continues to work across reboots. The service builds the
+report, stores it, computes a canonical report hash (same algorithm used for
+integrity registration) and returns the full API response including the hash.
 """
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.blockchain.hashes import hash_report_payload, report_integrity_payload
+from app.models.report import Report
 from app.models.user import User
 from app.reports.builders import BUILDERS
 from app.reports.pdf import encode_pdf_artifact
+from app.repositories.report_repository import ReportRepository
 from app.schemas.report import ReportMeta, ReportRequest, ReportResponse, ReportSection
-
-# Simple in-memory store (reports survive only for the process lifetime).
-_STORE: dict[str, ReportResponse] = {}
 
 
 def _lines(sections: list[ReportSection]) -> list[str]:
@@ -27,11 +31,11 @@ def _lines(sections: list[ReportSection]) -> list[str]:
 
 
 class ReportService:
-    """Generate and retrieve reports."""
+    """Generate and retrieve reports (persisted in PostgreSQL)."""
 
-    def __init__(self, session, store, user: User) -> None:
+    def __init__(self, session: AsyncSession, store, user: User) -> None:
         self._session = session
-        self._store = store
+        self._store = store  # graph store (used by builders)
         self._user = user
 
     async def generate(self, request: ReportRequest) -> ReportResponse:
@@ -46,31 +50,89 @@ class ReportService:
 
         title = request.title or request.report_type.replace("_", " ").title()
         artifact = encode_pdf_artifact(_lines(sections), title)
+        report_id = uuid.uuid4().hex
+        generated_at = datetime.now(timezone.utc)
 
-        report = ReportResponse(
-            id=uuid.uuid4().hex,
+        # Canonical sections for hashing: consistent dict shape whether
+        # originating from pydantic objects or loaded back from JSON.
+        canonical_sections = [{"heading": s.heading, "body": list(s.body)} for s in sections]
+
+        # Canonical hash (same logic used at registration + verification).
+        report_hash = hash_report_payload(report_integrity_payload(
+            report_id=report_id, report_type=request.report_type,
+            title=title, sections=canonical_sections,
+            generated_at=generated_at.isoformat(),
+        ))
+
+        # Resolve optional case id for the foreign key.
+        case_id = None
+        if request.case_number:
+            from app.repositories.case_repository import CaseRepository
+            repo = CaseRepository(self._session)
+            case = await repo.get_by_case_number(request.case_number)
+            if case is None and request.case_number.isdigit():
+                case = await repo.get(int(request.case_number))
+            if case is not None:
+                case_id = case.id
+
+        persisted = await ReportRepository(self._session).create(
+            id=report_id,
+            case_id=case_id,
             report_type=request.report_type,
             title=title,
-            generated_at=datetime.now(timezone.utc),
             generated_by=self._user.username,
-            sections=sections,
+            sections_json=canonical_sections,
             artifact=artifact,
+            artifact_mime="application/pdf",
+            report_hash=report_hash,
+            generated_at=generated_at,
         )
-        _STORE[report.id] = report
-        return report
 
-    def get_meta(self, report_id: str) -> ReportMeta | None:
-        report = _STORE.get(report_id)
-        if report is None:
+        return ReportResponse(
+            id=persisted.id,
+            report_type=persisted.report_type,
+            title=persisted.title,
+            generated_at=persisted.generated_at,
+            generated_by=persisted.generated_by,
+            sections=sections,
+            artifact=persisted.artifact,
+        )
+
+    async def get(self, report_id: str) -> ReportResponse | None:
+        row = await ReportRepository(self._session).get(report_id)
+        if row is None:
             return None
-        return ReportMeta(
-            id=report.id,
-            report_type=report.report_type,
-            title=report.title,
-            generated_at=report.generated_at,
-            generated_by=report.generated_by,
-            sections=len(report.sections),
-        )
+        return _row_to_response(row)
 
-    def list_meta(self) -> list[ReportMeta]:
-        return [self.get_meta(rid) for rid in _STORE if self.get_meta(rid) is not None]
+    async def list_meta(self, case_number: str | None = None) -> list[ReportMeta]:
+        repo = ReportRepository(self._session)
+        if case_number:
+            from app.repositories.case_repository import CaseRepository
+            case = await CaseRepository(self._session).get_by_case_number(case_number)
+            if case is None and case_number.isdigit():
+                case = await (CaseRepository(self._session)).get(int(case_number))
+            if case is None:
+                return []
+            rows = await repo.list_by_case(case.id)
+        else:
+            rows = await repo.list_recent()
+        return [
+            ReportMeta(
+                id=r.id, report_type=r.report_type, title=r.title,
+                generated_at=r.generated_at, generated_by=r.generated_by,
+                sections=len(r.sections_json),
+            )
+            for r in rows
+        ]
+
+
+def _row_to_response(row: Report) -> ReportResponse:
+    return ReportResponse(
+        id=row.id,
+        report_type=row.report_type,
+        title=row.title,
+        generated_at=row.generated_at,
+        generated_by=row.generated_by,
+        sections=[ReportSection(heading=s.get("heading", ""), body=s.get("body", [])) for s in row.sections_json],
+        artifact=row.artifact,
+    )

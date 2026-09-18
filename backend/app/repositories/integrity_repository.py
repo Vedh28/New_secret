@@ -56,14 +56,6 @@ class LedgerEventRepository(BaseRepository[LedgerEvent]):
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def count_by_case(self, case_id: str) -> int:
-        from sqlalchemy import func as _func
-
-        result = await self._session.execute(
-            select(_func.count()).select_from(LedgerEvent).where(LedgerEvent.case_id == case_id)
-        )
-        return int(result.scalar() or 0)
-
     async def get_by_transaction(self, case_id: str, transaction_id: str) -> LedgerEvent | None:
         stmt = (
             select(LedgerEvent)

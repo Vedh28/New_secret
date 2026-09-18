@@ -15,6 +15,7 @@ UNAVAILABLE / PENDING — the investigation pipeline continues unaffected.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -40,6 +41,8 @@ from app.repositories.integrity_repository import (
     LedgerEventRepository,
 )
 from app.repositories.source_repository import SourceRepository
+
+logger = logging.getLogger("secret.integrity")
 
 MAX_ATTEMPTS = 3
 
@@ -117,7 +120,9 @@ class BlockchainIntegrityService:
         try:
             block = self._engine.compute_block(previous=latest, case_id=case_id, events=events)
             await self._store.append_block(block)
-        except Exception as exc:  # noqa: BLE001 - integrity failure must not break case work
+        except Exception as exc:  # noqa: BLE001 - integrity outage must not break case work
+            logger.warning("integrity ledger append failed for case=%s events=%d: %s",
+                           case_id, len(planned), exc)
             for outbox, _tx in planned:
                 outbox.attempts = (outbox.attempts or 0) + 1
                 outbox.last_error = str(exc)[:500]
@@ -232,12 +237,18 @@ class BlockchainIntegrityService:
     async def register_processed_batch(self, *, case_id: str, source_id: str, source_type: str,
                                        records: list[dict], actor_id: int | None,
                                        extraction: dict | None = None) -> dict:
-        """Register one batched RECORD_BATCH / PROCESSED integrity event."""
+        """Register the full post-processing integrity surface for a source.
+
+        Enqueues EVIDENCE_PROCESSED, RECORD_BATCH_REGISTERED,
+        ENTITY_EXTRACTED and RELATIONSHIP_DERIVED as ONE batch and flushes them
+        into a single chained block during the same processing operation.
+        """
         case_id = _normalize_case(case_id)
-        record_hashes = [hashes.hash_record(_canonical_record(record)) for record in records]
+        record_hashes = [hashes.hash_canonical_record(record) for record in records]
         batch = merkle.batch_integrity(record_hashes) if record_hashes else None
 
-        payload = {
+        extraction = extraction or {}
+        processed = {
             "event_type": "EVIDENCE_PROCESSED",
             "case_id": str(case_id),
             "source_id": str(source_id),
@@ -245,28 +256,50 @@ class BlockchainIntegrityService:
             "record_count": len(records),
             "merkle_root": batch["merkle_root"] if batch else None,
             "batch_algorithm": "MERKLE-SHA256" if batch else None,
-            "entities_extracted": (extraction or {}).get("entities", 0),
-            "relationships_extracted": (extraction or {}).get("relationships", 0),
+            "entities_extracted": extraction.get("entities", 0),
+            "relationships_extracted": extraction.get("relationships", 0),
             "actor_id": str(actor_id or ""),
         }
-        outcome = await self._append_and_link(
-            case_id=case_id, event_type="EVIDENCE_PROCESSED", entity_type="source",
-            entity_id=source_id, payload=payload, actor_id=actor_id,
-        )
-        if batch and outcome.get("transaction_id"):
-            extra = {
-                "event_type": "RECORD_BATCH_REGISTERED",
-                "case_id": str(case_id),
-                "source_id": str(source_id),
-                "record_count": len(records),
-                "merkle_root": batch["merkle_root"],
-                "batch_algorithm": "MERKLE-SHA256",
-                "actor_id": str(actor_id or ""),
-            }
+        await self.enqueue(case_id=case_id, event_type="EVIDENCE_PROCESSED",
+                           entity_type="source", entity_id=source_id,
+                           payload=processed, actor_id=actor_id)
+
+        if batch:
             await self.enqueue(case_id=case_id, event_type="RECORD_BATCH_REGISTERED",
                                entity_type="source", entity_id=source_id,
-                               payload=extra, actor_id=actor_id)
-        return {**payload, "merkle_root": batch["merkle_root"] if batch else None}
+                               payload={
+                                   "event_type": "RECORD_BATCH_REGISTERED",
+                                   "case_id": str(case_id),
+                                   "source_id": str(source_id),
+                                   "record_count": len(records),
+                                   "merkle_root": batch["merkle_root"],
+                                   "batch_algorithm": "MERKLE-SHA256",
+                                   "actor_id": str(actor_id or ""),
+                               }, actor_id=actor_id)
+
+        for event_type, count_field, count in (
+            ("ENTITY_EXTRACTED", "entities", extraction.get("entities", 0)),
+            ("RELATIONSHIP_DERIVED", "relationships", extraction.get("relationships", 0)),
+        ):
+            await self.enqueue(case_id=case_id, event_type=event_type,
+                               entity_type="source", entity_id=source_id,
+                               payload={
+                                   "event_type": event_type,
+                                   "case_id": str(case_id),
+                                   "source_id": str(source_id),
+                                   "count": int(count or 0),
+                                   "actor_id": str(actor_id or ""),
+                               }, actor_id=actor_id)
+
+        # ONE flush -> one chained block carrying all four events.
+        confirmed = await self.flush_pending(case_id)
+        primary = confirmed[0] if confirmed else {}
+        return {
+            **processed,
+            "merkle_root": batch["merkle_root"] if batch else None,
+            "transaction_id": primary.get("transaction_id"),
+            "block_index": primary.get("block_index"),
+        }
 
     # ------------------------------------------------------------------
     # Analyst decision integrity (Phase 12)
@@ -275,26 +308,65 @@ class BlockchainIntegrityService:
                                       decision: str, evidence_ids: list[str], notes: str | None,
                                       actor_id: int | None, snapshot_hash: str = "") -> dict:
         case_id = _normalize_case(case_id)
+        pair = f"{entity_a}<->{entity_b}"
         payload = hash_decision_payload(
             case_id=case_id, entity_a=entity_a, entity_b=entity_b, decision=decision,
             evidence_ids_hash=hash_json(sorted(evidence_ids or [])),
             notes_hash=hash_text(notes or ""), analyst_id=actor_id, snapshot_hash=snapshot_hash,
         )
         payload["event_type"] = "ANALYST_DECISION"
+        payload_hash = hash_json(payload)
+
+        # Idempotency: an identical decision for the same pair is not
+        # re-registered (neither as a confirmed event nor as pending work).
+        existing = await self._find_event(case_id, "ANALYST_DECISION", pair, payload_hash)
+        if existing:
+            return {**payload, "duplicate": True, "transaction_id": existing.get("transaction_id"),
+                    "block_index": existing.get("block_index")}
+
         outcome = await self._append_and_link(
             case_id=case_id, event_type="ANALYST_DECISION",
-            entity_type="potential_link", entity_id=f"{entity_a}<->{entity_b}",
+            entity_type="potential_link", entity_id=pair,
             payload=payload, actor_id=actor_id,
         )
-        return {**payload, "transaction_id": outcome.get("transaction_id"), "block_index": outcome.get("block_index")}
+        return {**payload, "duplicate": False, "transaction_id": outcome.get("transaction_id"),
+                "block_index": outcome.get("block_index")}
 
     # ------------------------------------------------------------------
-    # Intelligence snapshot integrity (Phase 11)
+    # Intelligence snapshot integrity (Phase 11 -> Phase 3 idempotent)
     # ------------------------------------------------------------------
+    async def _find_event(self, case_id: str, event_type: str, entity_id: str | None,
+                          payload_hash: str) -> dict | None:
+        """Return an existing confirmed event or pending outbox row matching
+        (event_type, entity_id, payload_hash) for a case — nil duplicates."""
+        events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=2000)
+        for e in events:
+            if e.event_type == event_type and e.entity_id == entity_id and e.payload_hash == payload_hash:
+                return {"transaction_id": e.transaction_id, "block_index": e.block_index}
+        pending = await IntegrityOutboxRepository(self._session).pending_for_case(case_id, limit=500)
+        for outbox in pending:
+            if outbox.event_type == event_type and outbox.entity_id == entity_id \
+                    and outbox.payload_hash == payload_hash:
+                return {"transaction_id": None, "block_index": None, "pending": True}
+        return None
+
+    async def snapshot_hash_present(self, case_id: str, snapshot_hash: str) -> bool:
+        """True when this exact snapshot fingerprint was already committed."""
+        case_id = _normalize_case(case_id)
+        events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=2000)
+        if any(e.event_type == "INTELLIGENCE_SNAPSHOT"
+               and e.payload_json.get("snapshot_hash") == snapshot_hash for e in events):
+            return True
+        pending = await IntegrityOutboxRepository(self._session).pending_for_case(case_id, limit=500)
+        return any(o.event_type == "INTELLIGENCE_SNAPSHOT"
+                   and o.payload_json.get("snapshot_hash") == snapshot_hash for o in pending)
+
     async def register_intelligence_snapshot(self, *, case_id: str, snapshot: dict,
                                              actor_id: int | None = None) -> dict:
         case_id = _normalize_case(case_id)
         snapshot_hash = hash_intelligence_snapshot(snapshot)
+        if await self.snapshot_hash_present(case_id, snapshot_hash):
+            return {"duplicate": True, "snapshot_hash": snapshot_hash, "case_id": case_id}
         payload = {
             "event_type": "INTELLIGENCE_SNAPSHOT",
             "case_id": str(case_id),
@@ -308,18 +380,43 @@ class BlockchainIntegrityService:
             case_id=case_id, event_type="INTELLIGENCE_SNAPSHOT",
             entity_type="case", entity_id=str(case_id), payload=payload, actor_id=actor_id,
         )
-        return {**payload, "transaction_id": outcome.get("transaction_id"), "block_index": outcome.get("block_index")}
+        return {**payload, "duplicate": False, "transaction_id": outcome.get("transaction_id"), "block_index": outcome.get("block_index")}
+
+    async def enqueue_snapshot(self, *, case_id, snapshot_hash: str, engine_version: str = "1.x",
+                               actor_id: int | None = None) -> dict:
+        """Idempotent snapshot enqueue (case + snapshot_hash + engine_version).
+
+        An identical fingerprint already registered or pending is a no-op.
+        """
+        case_id = _normalize_case(case_id)
+        if await self.snapshot_hash_present(case_id, snapshot_hash):
+            return {"duplicate": True, "snapshot_hash": snapshot_hash, "case_id": case_id}
+        payload = {
+            "event_type": "INTELLIGENCE_SNAPSHOT",
+            "case_id": str(case_id),
+            "engine": "CaseIntelligenceService",
+            "engine_version": engine_version,
+            "snapshot_hash": snapshot_hash,
+            "created_at": _now_iso(),
+            "actor_id": str(actor_id or ""),
+        }
+        await self.enqueue(case_id=case_id, event_type="INTELLIGENCE_SNAPSHOT",
+                           entity_type="case", entity_id=str(case_id),
+                           payload=payload, actor_id=actor_id)
+        return {"duplicate": False, "snapshot_hash": snapshot_hash, "case_id": case_id}
 
     # ------------------------------------------------------------------
     # Report integrity (Phase 13)
     # ------------------------------------------------------------------
-    async def register_report(self, *, case_id: str, report: Any, actor_id: int | None = None) -> dict:
+    async def register_report(self, *, case_id: str, report: Any, actor_id: int | None = None,
+                              report_hash: str | None = None) -> dict:
         case_id = _normalize_case(case_id)
-        report_payload = hashes.report_integrity_payload(
-            report_id=report.id, report_type=report.report_type, title=report.title,
-            sections=list(report.sections), generated_at=getattr(report, "generated_at", ""),
-        )
-        report_hash = hash_report_payload(report_payload)
+        if not report_hash:
+            report_payload = hashes.report_integrity_payload(
+                report_id=report.id, report_type=report.report_type, title=report.title,
+                sections=list(report.sections), generated_at=getattr(report, "generated_at", ""),
+            )
+            report_hash = hash_report_payload(report_payload)
         payload = {
             "event_type": "REPORT_GENERATED",
             "case_id": str(case_id),
@@ -353,9 +450,16 @@ class BlockchainIntegrityService:
         verified = sum(1 for check in matches if check["status"] == "VERIFIED")
         mismatches = sum(1 for check in matches if check["status"] == "MISMATCH")
 
-        events = await events_repo.list_by_case(case_id, limit=1)
-        snapshots = [e for e in events if e.event_type == "INTELLIGENCE_SNAPSHOT"]
-        reports = [e for e in events if e.event_type == "REPORT_GENERATED"]
+        all_events = await events_repo.list_by_case(case_id, limit=5000)
+        snapshots = [e for e in all_events if e.event_type == "INTELLIGENCE_SNAPSHOT"]
+        report_events = [e for e in all_events if e.event_type == "REPORT_GENERATED"]
+
+        # Registered vs ACTUALLY verified: an event existing does not mean the
+        # current persisted object still matches its registered commitment.
+        registered_snapshots = len(snapshots)
+        registered_reports = len(report_events)
+        verified_snapshots = await self._count_verified_snapshots(case_id, snapshots)
+        verified_reports = await self._count_verified_reports(case_id, report_events)
 
         latest_block = chain[-1] if chain else None
         return {
@@ -363,15 +467,59 @@ class BlockchainIntegrityService:
             "chain_status": chain_status,
             "chain_valid": chain_valid,
             "blocks": len(chain),
-            "events": await events_repo.count_by_case(case_id),
+            "events": len(all_events),
             "evidence_registered": registered,
             "evidence_verified": verified,
             "mismatches": mismatches,
-            "verified_snapshots": len(snapshots),
-            "verified_reports": len(reports),
+            "registered_snapshots": registered_snapshots,
+            "verified_snapshots": verified_snapshots,
+            "registered_reports": registered_reports,
+            "verified_reports": verified_reports,
             "latest_block": _block_read(latest_block),
             "issues": issues[:10],
         }
+
+    async def _count_verified_snapshots(self, case_id: str, snapshots: list) -> int:
+        """How many snapshot commitments match the CURRENT intelligence.
+
+        Only fingerprints equal to the current canonical snapshot count as
+        verified — event existence alone never does.
+        """
+        if not snapshots:
+            return 0
+        try:
+            from app.services.case_intelligence_service import CaseIntelligenceService
+            snapshot = await CaseIntelligenceService(self._session).build(
+                int(case_id), cache={}, register_integrity=False,
+            )
+            from app.blockchain.hashes import hash_intelligence_snapshot
+            current = hash_intelligence_snapshot(snapshot)
+        except Exception:  # noqa: BLE001 - counting must never break the summary
+            return 0
+        return sum(1 for e in snapshots if e.payload_json.get("snapshot_hash") == current)
+
+    async def _count_verified_reports(self, case_id: str, report_events: list) -> int:
+        """Reports whose persisted canonical hash matches their ledger event."""
+        if not report_events:
+            return 0
+        from app.repositories.report_repository import ReportRepository
+
+        by_id = {row.id: row for row in await ReportRepository(self._session).list_by_case(int(case_id), limit=5000)}
+        verified = 0
+        for event in report_events:
+            row = by_id.get(event.entity_id)
+            if row is None:
+                continue
+            try:
+                current = hash_report_payload(hashes.report_integrity_payload(
+                    report_id=row.id, report_type=row.report_type, title=row.title,
+                    sections=row.sections_json, generated_at=str(row.generated_at),
+                ))
+            except Exception:  # noqa: BLE001
+                continue
+            if current == event.payload_json.get("report_hash"):
+                verified += 1
+        return verified
 
     def _chain_status(self, case_id: str, chain: list) -> tuple[bool, str, list[str]]:
         if not chain:
@@ -423,6 +571,31 @@ class BlockchainIntegrityService:
         evidence = await EvidenceIntegrityRepository(self._session).list_by_case(case_id)
         checks = await self._verify_stored_evidence(case_id, evidence)
         mismatches = [c for c in checks if c["status"] == "MISMATCH"]
+
+        # P1-5: verify every ledger event's payload hash + block reference, so
+        # a modified payload or a dangling event->block pointer is detected.
+        events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=5000)
+        block_by_index = {block.index: block for block in chain}
+        consistency_issues: list[dict] = []
+        for event in events:
+            issue = None
+            computed = hash_json(event.payload_json or {})
+            if event.payload_hash and computed != event.payload_hash:
+                issue = "payload hash mismatch"
+            elif event.block_index is not None:
+                block = block_by_index.get(event.block_index)
+                if block is None:
+                    issue = "event references a missing block"
+                elif event.block_hash and block.hash != event.block_hash:
+                    issue = "event references a different block hash"
+            if issue:
+                consistency_issues.append({
+                    "transaction_id": event.transaction_id,
+                    "event_type": event.event_type,
+                    "entity_id": event.entity_id,
+                    "issue": issue,
+                })
+
         return {
             "case_id": case_id,
             "chain_status": chain_status,
@@ -432,6 +605,9 @@ class BlockchainIntegrityService:
             "evidence_verified": sum(1 for c in checks if c["status"] == "VERIFIED"),
             "mismatches": mismatches[:50],
             "chain_issues": issues[:20],
+            "events_checked": len(events),
+            "event_consistency_valid": len(consistency_issues) == 0,
+            "event_consistency_issues": consistency_issues[:50],
         }
 
     async def verify_evidence(self, case_id: str, source_id: str) -> dict:
@@ -474,25 +650,43 @@ class BlockchainIntegrityService:
         entry = next((r for r in records if str(r.get("id", "")) == str(record_id)), None)
         if entry is None:
             return {"verified": False, "status": "UNAVAILABLE", "reason": "record not found"}
-        record_hashes = [hashes.hash_record(_canonical_record(r)) for r in records]
-        record_hash = hashes.hash_record(_canonical_record(entry))
-        root = merkle.merkle_root(record_hashes)
-        batch = merkle.batch_integrity(record_hashes)
+
+        current_hashes = [hashes.hash_canonical_record(r) for r in records]
+        current_record_hash = hashes.hash_canonical_record(entry)
+        root = merkle.merkle_root(current_hashes)
+
+        # Committed canonical sha (captured at ingest time) guards against the
+        # stored record dict drifting from what was actually processed.
+        provenance = {str(p.get("record_id")): p for p in (meta.get("provenance") or [])}
+        committed = provenance.get(str(record_id)) or {}
+        committed_hash = committed.get("record_hash")
+        if committed_hash and committed_hash != current_record_hash:
+            return {
+                "verified": False, "status": "MISMATCH",
+                "reason": "current record content hash differs from its committed record hash",
+                "record_hash": current_record_hash, "committed_record_hash": committed_hash,
+            }
+
         events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=500)
         batch_event = next((e for e in events if e.event_type == "EVIDENCE_PROCESSED" and e.entity_id == source_id
                             and e.payload_json.get("merkle_root") == root), None)
         if batch_event is None:
             return {"verified": False, "status": "UNAVAILABLE",
-                    "reason": "no ledger batch found for this source's record set"}
+                    "reason": "no ledger batch event found for this source's current record set"}
+
+        proof = merkle.build_merkle_proof(current_record_hash, current_hashes)
+        proof_valid = bool(proof) and merkle.verify_merkle_proof(proof, root) if proof else False
         return {
             "verified": True,
             "status": "VERIFIED",
-            "record_hash": record_hash,
+            "record_hash": current_record_hash,
             "merkle_root": root,
             "record_count": len(records),
             "transaction_id": batch_event.transaction_id,
             "block_index": batch_event.block_index,
-            "reason": "record hash is part of the registered batch root",
+            "reason": "record hash is part of the registered batch (Merkle inclusion proof matches)",
+            "merkle_proof": proof if proof_valid else None,
+            "proof_valid": proof_valid,
         }
 
     async def get_case_ledger(self, case_id: str, limit: int = 200) -> list[dict]:
@@ -530,8 +724,8 @@ class BlockchainIntegrityService:
         case_id = _normalize_case(case_id)
         event = await self.latest_event(case_id, "INTELLIGENCE_SNAPSHOT")
         if event is None:
-            return {"verified": False, "status": "UNAVAILABLE",
-                    "reason": "no intelligence snapshot registered for this case"}
+            return {"verified": False, "status": "NOT_REGISTERED",
+                    "reason": "no intelligence snapshot registration exists for this case"}
         registered = event.payload_json.get("snapshot_hash", "")
         matched = bool(current_snapshot_hash) and current_snapshot_hash == registered
         return {
@@ -545,11 +739,11 @@ class BlockchainIntegrityService:
 
     async def verify_report(self, case_id: str, report_id: str, current_report_hash: str) -> dict:
         case_id = _normalize_case(case_id)
-        events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=500)
+        events = await LedgerEventRepository(self._session).list_by_case(case_id, limit=5000)
         event = next((e for e in events if e.event_type == "REPORT_GENERATED" and e.entity_id == report_id), None)
         if event is None:
-            return {"verified": False, "status": "UNAVAILABLE",
-                    "reason": "no integrity event registered for this report"}
+            return {"verified": False, "status": "NOT_REGISTERED",
+                    "reason": "report exists but no integrity registration was found"}
         registered = event.payload_json.get("report_hash", "")
         matched = bool(current_report_hash) and current_report_hash == registered
         return {
@@ -561,17 +755,6 @@ class BlockchainIntegrityService:
             "transaction_id": event.transaction_id,
             "block_index": event.block_index,
         }
-
-
-def _canonical_record(record: dict) -> dict:
-    """Normalize a stored record for deterministic hashing."""
-    fields = record.get("fields") or {}
-    return {
-        "id": str(record.get("id", "")),
-        "source_type": str(record.get("source_type", "")),
-        "timestamp": str(record.get("timestamp", "")),
-        "fields": {k: v for k, v in sorted((fields or {}).items())},
-    }
 
 
 def _block_read(block) -> dict | None:

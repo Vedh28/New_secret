@@ -121,14 +121,16 @@ async def verify_report(case_key: str, report_id: str, session: DbSession,
     await session.commit()
 
     from app.blockchain.hashes import hash_report_payload, report_integrity_payload
-    from app.reports.service import _STORE
+    from app.repositories.report_repository import ReportRepository
 
-    report = _STORE.get(report_id)
-    if report is None:
-        return {"verified": False, "status": "UNAVAILABLE", "reason": "report is not in the process store"}
+    # Case-scoped load: a report belonging to another case is treated as gone.
+    row = await ReportRepository(session).get_by_case_and_id(case_id, report_id)
+    if row is None:
+        return {"verified": False, "status": "UNAVAILABLE",
+                "reason": "report not found for this case"}
     current_hash = hash_report_payload(report_integrity_payload(
-        report_id=report.id, report_type=report.report_type, title=report.title,
-        sections=list(report.sections), generated_at=str(report.generated_at),
+        report_id=row.id, report_type=row.report_type, title=row.title,
+        sections=row.sections_json, generated_at=str(row.generated_at),
     ))
     return await svc.verify_report(case_id, report_id, current_hash)
 

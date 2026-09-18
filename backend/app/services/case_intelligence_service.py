@@ -58,27 +58,19 @@ class CaseIntelligenceService:
 
     async def _register_snapshot_integrity(self, case_id: int, result: dict,
                                            actor_id: int | None) -> None:
-        """Enqueue an intelligence snapshot integrity event (best-effort).
+        """Idempotent intelligence snapshot registration (best-effort).
 
-        Blockchain availability must never affect investigation analytics, so
-        any failure here is swallowed after leaving a retryable PENDING signal.
+        The fingerprint identity is (case_id + snapshot_hash + engine_version),
+        so rebuilding the same analytical state does NOT create duplicate
+        ledger events. Blockchain availability must never affect investigation
+        analytics, so failures are swallowed after leaving a retryable signal.
         """
         try:
             from app.blockchain.service import BlockchainIntegrityService
-            await BlockchainIntegrityService(self._session).enqueue(
+            await BlockchainIntegrityService(self._session).enqueue_snapshot(
                 case_id=case_id,
-                event_type="INTELLIGENCE_SNAPSHOT",
-                entity_type="case",
-                entity_id=str(case_id),
-                payload={
-                    "event_type": "INTELLIGENCE_SNAPSHOT",
-                    "case_id": str(case_id),
-                    "engine": "CaseIntelligenceService",
-                    "engine_version": "1.x",
-                    "snapshot_hash": _snapshot_fingerprint(result),
-                    "created_at": _now_iso(),
-                    "actor_id": str(actor_id or ""),
-                },
+                snapshot_hash=_snapshot_fingerprint(result),
+                engine_version="1.x",
                 actor_id=actor_id,
             )
         except Exception:  # noqa: BLE001 - integrity layer must never block analytics
@@ -248,11 +240,6 @@ def _build_recommendations(data, entity_priorities, entity_gains, links, link_pr
 
 def _d(dataclass_obj) -> dict:
     return asdict(dataclass_obj)
-
-
-def _now_iso() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _snapshot_fingerprint(result: dict) -> str:

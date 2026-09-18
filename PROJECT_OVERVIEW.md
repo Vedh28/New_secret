@@ -479,3 +479,14 @@ Implementation (`backend/app/blockchain/`):
 Event types: EVIDENCE_REGISTERED, EVIDENCE_PROCESSED, RECORD_BATCH_REGISTERED, EVIDENCE_VERSION_CREATED, ENTITY_EXTRACTED, RELATIONSHIP_DERIVED, ANALYST_DECISION, INTELLIGENCE_SNAPSHOT, REPORT_GENERATED.
 
 A verified integrity hash means "the referenced data matches its registered cryptographic representation" — it does NOT prove an analytical interpretation or relationship is true. Potential relationships remain POTENTIAL until an analyst confirms them. Blockchain failure never blocks investigation analytics (`LEDGER_UNAVAILABLE` / PENDING instead of silent success).
+
+
+### Accurate description (non-claims)
+
+- SECRET uses a **permissioned, database-backed chained integrity ledger** in the prototype (a local permissioned chain, not a decentralized/distributed public blockchain).
+- PostgreSQL remains the authoritative data store; the ledger stores cryptographic hashes and provenance metadata rather than sensitive evidence itself.
+- The ledger is NOT an absolute "immutable" database, does not contain cryptocurrency/wallets/tokens, and does NOT prove guilt or that an entity relationship is true.
+- Institutional deployment can replace the local ledger backend with a permissioned blockchain network through the existing `BlockchainLedger` abstraction (see `app/blockchain/adapters/evm.py`); no public-chain or gas dependency is required for the prototype.
+- Reports persist in PostgreSQL (`reports` table); report and intelligence integrity is verified against the registered commitment, not merely the existence of an event.
+
+Integrity terminology used across the platform: `VERIFIED` = current content matches its registered cryptographic commitment; `PENDING` = integrity event queued but not yet confirmed on the chain; `MISMATCH` = current content differs from the registered commitment; `UNAVAILABLE` = no chain/registration exists.

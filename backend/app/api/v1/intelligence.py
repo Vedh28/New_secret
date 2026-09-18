@@ -55,8 +55,15 @@ async def _resolve_case_id(session, case_key: str) -> int:
 async def get_intelligence(case_key: str, session: DbSession, _user: CurrentUser) -> dict:
     case_id = await _resolve_case_id(session, case_key)
     result = await CaseIntelligenceService(session).build(case_id, cache=_cache)
-    # A freshly computed snapshot enqueues an INTEGRITY SNAPSHOT outbox event;
-    # persist it so the ledger can confirm it (no-op when the cache already had it).
+    # A freshly computed snapshot enqueues an idempotent INTEGRITY SNAPSHOT
+    # outbox event; flush it so the ledger confirms it (a cache hit re-enqueues
+    # nothing, so repeated reads cannot duplicate snapshots).
+    try:
+        from app.blockchain.service import BlockchainIntegrityService
+        svc = BlockchainIntegrityService(session)
+        await svc.flush_pending(case_id)
+    except Exception:  # noqa: BLE001 - integrity must never break intelligence reads
+        pass
     await session.commit()
     return result
 

@@ -24,6 +24,18 @@ const STATUS_CLASS: Record<string, string> = {
   UNAVAILABLE: "status-mute",
 };
 
+// Chain-of-custody stages derived from REAL ledger events (no fake steps).
+const CUSTODY_STAGES: { event: string; label: string }[] = [
+  { event: "EVIDENCE_REGISTERED", label: "Evidence Registered" },
+  { event: "EVIDENCE_PROCESSED", label: "Evidence Processed" },
+  { event: "RECORD_BATCH_REGISTERED", label: "Records Batched (Merkle)" },
+  { event: "ENTITY_EXTRACTED", label: "Entities Extracted" },
+  { event: "RELATIONSHIP_DERIVED", label: "Relationships Derived" },
+  { event: "INTELLIGENCE_SNAPSHOT", label: "Intelligence Snapshot" },
+  { event: "ANALYST_DECISION", label: "Analyst Decision" },
+  { event: "REPORT_GENERATED", label: "Report Generated" },
+];
+
 function statusText(status: string | undefined): string {
   return status || "UNAVAILABLE";
 }
@@ -158,8 +170,10 @@ export function EvidenceIntegrityPage() {
               { label: "Evidence verified", value: String(summary.evidence_verified) },
               { label: "Integrity mismatches", value: String(summary.mismatches) },
               { label: "Ledger events", value: String(summary.events) },
-              { label: "Verified snapshots", value: String(summary.verified_snapshots) },
-              { label: "Verified reports", value: String(summary.verified_reports) },
+              { label: "Snapshots registered", value: String(summary.registered_snapshots) },
+              { label: "Snapshots verified", value: String(summary.verified_snapshots) },
+              { label: "Reports registered", value: String(summary.registered_reports) },
+              { label: "Reports verified", value: String(summary.verified_reports) },
             ]} />
             {pending > 0 && <div className="meta" style={{ marginTop: 8 }}>{pending} pending integrity event(s) awaiting confirmation</div>}
             <button className="cta" onClick={verifyAll} disabled={verifying} style={{ marginTop: 12 }}>
@@ -198,13 +212,29 @@ export function EvidenceIntegrityPage() {
             </HudCard>
           )}
 
-          <HudCard label="Chain of custody" title="Evidence lifecycle">
+          <HudCard label="Chain of custody" title="Evidence lifecycle (from real ledger events)">
             <div className="mini-list compact-feed">
-              {["Evidence Registered", "Evidence Processed", "Records Batched (Merkle)", "Entities Extracted", "Relationships Derived", "Analyst Review", "Decision", "Report Generated"].map((step, i) => (
-                <div key={step} className="entity feed-row"><span className="meta">0{i + 1}</span><span>{step}</span></div>
-              ))}
+              {CUSTODY_STAGES.map((stage, i) => {
+                const event = events.find((e) => e.event_type === stage.event);
+                return (
+                  <div key={stage.event} className="entity feed-row">
+                    <span className={`meta ${event ? "status-ok" : "status-mute"}`}>{event ? "◆" : "○"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div>{stage.label} <span className="meta">0{i + 1}</span></div>
+                      {event ? (
+                        <div className="meta" style={{ fontSize: 10 }}>
+                          {event.transaction_id} · block {event.block_index ?? "—"}
+                          {event.created_at ? ` · ${new Date(event.created_at).toLocaleString()}` : ""}
+                        </div>
+                      ) : (
+                        <div className="meta" style={{ fontSize: 10 }}>Not yet recorded in the ledger</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div className="meta" style={{ marginTop: 10 }}>Only hashes and references are written to the ledger; evidence content stays in the case store.</div>
+            <div className="meta" style={{ marginTop: 10 }}>Stages reflect actual ledger events only — an absent event is reported explicitly, never implied. Only hashes and references are written to the ledger; evidence content stays in the case store.</div>
           </HudCard>
 
           <HudCard label="Blockchain activity" title="Recent ledger events">
