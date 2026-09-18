@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useBackendStore } from "../store/backend";
 import { useMapStore } from "../store/mapStore";
 import { apiListCases, type CaseRead } from "./api";
+import { prototypeCases } from "../data/prototypeCase";
 
 /**
  * Shared "select a case" state for analysis pages. Falls back to null when the
@@ -14,8 +15,17 @@ export function useCaseSelection() {
 
   const reload = useCallback(() => {
     if (backend !== "backend") {
-      setCases([]);
-      setCaseKey("");
+      setCases(prototypeCases.map((item, index) => ({
+        id: index + 1,
+        case_number: item.caseId,
+        title: item.title,
+        description: item.title,
+        status: item.status,
+        priority: item.priority,
+        created_at: item.lastActivity,
+        updated_at: item.lastActivity,
+      })));
+      setCaseKey((prev) => prev || prototypeCases[0]?.caseId || "");
       return;
     }
     apiListCases({ limit: 100 })

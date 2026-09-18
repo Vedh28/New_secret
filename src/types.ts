@@ -57,6 +57,7 @@ export type CaseLocation = {
   importance: number;
   timestamp: string;
   entityIds: string[];
+  entityNames?: string[];
   eventIds: string[];
   observationCount?: number;
   sourceCount?: number;

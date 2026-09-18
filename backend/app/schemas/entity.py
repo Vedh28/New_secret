@@ -22,3 +22,15 @@ class RelationshipRead(BaseModel):
     source_ids: list[str] = Field(default_factory=list)
     attributes: dict = Field(default_factory=dict)
     created_at: datetime
+
+
+class EntityUpdate(BaseModel):
+    """Identity resolution fields for a persisted canonical entity."""
+
+    name: str = Field(min_length=1, max_length=255)
+    confidence: float = Field(ge=0, le=1)
+    source_ids: list[str] = Field(default_factory=list, max_length=50)
+    note: str | None = Field(default=None, max_length=2000)
+    location_name: str | None = Field(default=None, max_length=255)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)

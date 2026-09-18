@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     # Ingestion
     max_upload_bytes: int = 50_000_000
+    extraction_provider: str = "deterministic"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.8-flash"
 
     # Demo admin seed (dev only; override in production)
     admin_username: str = "admin"

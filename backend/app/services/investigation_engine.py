@@ -10,8 +10,8 @@ from __future__ import annotations
 from app.analysis import location as loc
 from app.analysis import temporal as tm
 from app.ingestion.adapters import normalize_record
-from app.ingestion.extraction import extract_many
 from app.ingestion.generator import generate_synthetic
+from app.ingestion.providers import get_extraction_provider
 from app.ingestion.resolution import resolve
 from app.graph.types import GraphEdge, GraphNode
 from app.analytics.graph_builder import build_graph
@@ -36,7 +36,7 @@ class InvestigationEngine:
         ]
 
         # 3. Extract entities + relationships.
-        extraction = extract_many(records)
+        extraction = get_extraction_provider().extract(records)
 
         # 4. Entity resolution over extracted mentions (known aliases from scenario records).
         known: dict[str, list[str]] = {}

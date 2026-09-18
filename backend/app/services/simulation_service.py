@@ -12,8 +12,8 @@ import time
 from app.analytics import community, kingpin, risk
 from app.analytics.graph_builder import build_graph
 from app.ingestion.adapters import normalize_record
-from app.ingestion.extraction import extract_many
 from app.ingestion.generator import ALL_SCENARIOS, generate_synthetic
+from app.ingestion.providers import get_extraction_provider
 from app.ingestion.resolution import resolve
 
 
@@ -39,7 +39,7 @@ class SimulationService:
         steps.append(self._step("Ingest & normalize", len(records), records))
 
         # 3. Extract entities + relationships.
-        extraction = extract_many(records)
+        extraction = get_extraction_provider().extract(records)
         steps.append(
             self._step("Extract entities", len(extraction.entities),
                        extraction.entities)

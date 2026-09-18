@@ -1,0 +1,94 @@
+{
+  "metadata": {
+    "title": "SECRET fictional investigation scenario",
+    "status": "prototype-only",
+    "warning": "All names, identifiers, vehicle details and events are fictional test data. Do not use for real investigations.",
+    "created_at": "2026-09-18"
+  },
+  "cases": [
+    {
+      "case_number": "CASE-BANDRA-001",
+      "title": "Bandra Incident - Coastal Link",
+      "priority": "HIGH",
+      "status": "OPEN",
+      "summary": "A fictional sexual-assault investigation reported in Bandra, Mumbai. Four suspects were detained in different locations. A stolen Hyundai Creta created a possible Mumbai-to-Delhi movement link. Guddu disclosed two additional unknown members.",
+      "locations": [
+        { "id": "LOC-BND-001", "name": "Bandra West, Mumbai", "latitude": 19.0607, "longitude": 72.8362, "role": "incident site" },
+        { "id": "LOC-DHR-001", "name": "Dharavi, Mumbai", "latitude": 19.039, "longitude": 72.8553, "role": "Ramesh detained" },
+        { "id": "LOC-MSR-001", "name": "Mansarovar, Jaipur", "latitude": 26.85, "longitude": 75.76, "role": "Rajesh detained" },
+        { "id": "LOC-MPH-001", "name": "Mumbai-Pune Highway", "latitude": 18.989, "longitude": 73.117, "role": "vehicle theft reported" },
+        { "id": "LOC-DEL-001", "name": "Delhi", "latitude": 28.6139, "longitude": 77.209, "role": "Nihal apprehended" },
+        { "id": "LOC-BEN-001", "name": "Bengal, Kolkata", "latitude": 22.5726, "longitude": 88.3639, "role": "Guddu detained" },
+        { "id": "LOC-PUN-001", "name": "Pune", "latitude": 18.5204, "longitude": 73.8567, "role": "prior murder case reference" }
+      ],
+      "people": [
+        { "id": "PERSON-RAMESH", "name": "Ramesh", "role": "suspect", "status": "detained", "location_id": "LOC-DHR-001" },
+        { "id": "PERSON-RAJESH", "name": "Rajesh", "role": "suspect", "status": "detained", "location_id": "LOC-MSR-001" },
+        { "id": "PERSON-NIHAL", "name": "Nihal", "role": "suspect", "status": "apprehended", "location_id": "LOC-DEL-001" },
+        { "id": "PERSON-GUDDU", "name": "Guddu", "role": "suspect and disclosing witness", "status": "detained", "location_id": "LOC-BEN-001" },
+        { "id": "PERSON-KAUSTUBH", "name": "Kaustubh", "role": "vehicle owner", "status": "complainant" },
+        { "id": "PERSON-UNKNOWN-01", "name": "Unknown member 1", "role": "person disclosed by Guddu", "status": "unidentified" },
+        { "id": "PERSON-UNKNOWN-02", "name": "Unknown member 2", "role": "person disclosed by Guddu", "status": "unidentified" }
+      ],
+      "vehicles": [
+        { "id": "VEHICLE-CRETA-001", "make_model": "Hyundai Creta", "number_plate": "MH-01-TEST-001", "registered_owner": "PERSON-KAUSTUBH", "status": "reported stolen" }
+      ],
+      "events": [
+        { "id": "EV-BND-001", "date": "2026-09-01T22:10:00Z", "type": "incident_reported", "location_id": "LOC-BND-001", "people": ["PERSON-RAMESH", "PERSON-RAJESH", "PERSON-NIHAL", "PERSON-GUDDU"], "description": "Incident reported in Bandra West, Mumbai. Survivor identity is protected." },
+        { "id": "EV-BND-002", "date": "2026-09-02T08:30:00Z", "type": "detention", "location_id": "LOC-DHR-001", "people": ["PERSON-RAMESH"], "description": "Ramesh detained in Dharavi." },
+        { "id": "EV-BND-003", "date": "2026-09-02T11:45:00Z", "type": "detention", "location_id": "LOC-MSR-001", "people": ["PERSON-RAJESH"], "description": "Rajesh detained in Mansarovar, Jaipur." },
+        { "id": "EV-BND-004", "date": "2026-09-02T16:20:00Z", "type": "vehicle_theft", "location_id": "LOC-MPH-001", "people": ["PERSON-NIHAL", "PERSON-KAUSTUBH"], "vehicles": ["VEHICLE-CRETA-001"], "description": "Kaustubh's Hyundai Creta was reported stolen near the Mumbai-Pune Highway." },
+        { "id": "EV-BND-005", "date": "2026-09-03T09:15:00Z", "type": "apprehension", "location_id": "LOC-DEL-001", "people": ["PERSON-NIHAL"], "vehicles": ["VEHICLE-CRETA-001"], "description": "Nihal apprehended in Delhi after the vehicle movement from Mumbai." },
+        { "id": "EV-BND-006", "date": "2026-09-03T13:40:00Z", "type": "disclosure", "location_id": "LOC-BEN-001", "people": ["PERSON-GUDDU", "PERSON-UNKNOWN-01", "PERSON-UNKNOWN-02"], "description": "Guddu said two more members were involved. Their identities and locations are unknown and unverified." },
+        { "id": "EV-BND-007", "date": "2026-09-03T15:00:00Z", "type": "prior_case_reference", "location_id": "LOC-PUN-001", "people": ["PERSON-GUDDU"], "description": "A prior Pune murder case and bail history was found for Guddu. Its relevance to the Bandra incident is unconfirmed." }
+      ],
+      "relationships": [
+        { "source": "PERSON-RAMESH", "target": "PERSON-RAJESH", "type": "possible_association", "confidence": 0.62 },
+        { "source": "PERSON-RAJESH", "target": "PERSON-NIHAL", "type": "possible_association", "confidence": 0.58 },
+        { "source": "PERSON-NIHAL", "target": "VEHICLE-CRETA-001", "type": "vehicle_movement_link", "confidence": 0.91 },
+        { "source": "PERSON-KAUSTUBH", "target": "VEHICLE-CRETA-001", "type": "registered_owner", "confidence": 0.92 },
+        { "source": "PERSON-GUDDU", "target": "PERSON-UNKNOWN-01", "type": "disclosed_involvement", "confidence": 0.64 },
+        { "source": "PERSON-GUDDU", "target": "PERSON-UNKNOWN-02", "type": "disclosed_involvement", "confidence": 0.64 }
+      ],
+      "evidence_gaps": [
+        "Independent confirmation of suspect relationships",
+        "Vehicle recovery and forensic linkage records",
+        "Identity and location of the two members disclosed by Guddu",
+        "Evidence connecting the prior Pune case to the Bandra incident"
+      ]
+    },
+    {
+      "case_number": "CASE-PUNE-002",
+      "title": "Pune Hit-and-Run - Budhwar Peth",
+      "priority": "HIGH",
+      "status": "OPEN",
+      "summary": "A fictional hit-and-run near Budhwar Peth, Pune. Deepak is the working driver lead. Shrived and Damodar were taken for medical care. A current lead places Deepak hiding in Hyderabad.",
+      "locations": [
+        { "id": "LOC-PUN-BUD-001", "name": "Budhwar Peth, Pune", "latitude": 18.5162, "longitude": 73.8567, "role": "collision site" },
+        { "id": "LOC-PUN-HOS-001", "name": "Sassoon General Hospital, Pune", "latitude": 18.5204, "longitude": 73.8567, "role": "victim care" },
+        { "id": "LOC-HYD-001", "name": "Hyderabad", "latitude": 17.385, "longitude": 78.4867, "role": "Deepak hiding lead" }
+      ],
+      "people": [
+        { "id": "PERSON-DEEPAK", "name": "Deepak", "role": "working driver lead", "status": "location unconfirmed", "location_id": "LOC-HYD-001" },
+        { "id": "PERSON-SHRIVED", "name": "Shrived", "role": "victim", "status": "medical records pending", "location_id": "LOC-PUN-HOS-001" },
+        { "id": "PERSON-DAMODAR", "name": "Damodar", "role": "victim", "status": "medical records pending", "location_id": "LOC-PUN-HOS-001" }
+      ],
+      "events": [
+        { "id": "EV-PUN-001", "date": "2026-09-04T21:35:00Z", "type": "hit_and_run_reported", "location_id": "LOC-PUN-BUD-001", "people": ["PERSON-DEEPAK", "PERSON-SHRIVED", "PERSON-DAMODAR"], "description": "Hit-and-run reported near Budhwar Peth. Deepak is identified only as a working lead." },
+        { "id": "EV-PUN-002", "date": "2026-09-04T22:10:00Z", "type": "medical_response", "location_id": "LOC-PUN-HOS-001", "people": ["PERSON-SHRIVED", "PERSON-DAMODAR"], "description": "Shrived and Damodar moved for medical care." },
+        { "id": "EV-PUN-003", "date": "2026-09-05T08:20:00Z", "type": "driver_identification_lead", "location_id": "LOC-PUN-BUD-001", "people": ["PERSON-DEEPAK"], "description": "Witness and CCTV material identify Deepak as the driver to investigate; independent confirmation is pending." },
+        { "id": "EV-PUN-004", "date": "2026-09-05T18:40:00Z", "type": "hiding_location_lead", "location_id": "LOC-HYD-001", "people": ["PERSON-DEEPAK"], "description": "A current lead places Deepak in Hyderabad. The location requires corroboration." }
+      ],
+      "relationships": [
+        { "source": "PERSON-DEEPAK", "target": "PERSON-SHRIVED", "type": "possible_collision_involvement", "confidence": 0.72 },
+        { "source": "PERSON-DEEPAK", "target": "PERSON-DAMODAR", "type": "possible_collision_involvement", "confidence": 0.72 }
+      ],
+      "evidence_gaps": [
+        "Vehicle identity and ownership records",
+        "Independent confirmation of the driver identity",
+        "Medical records for Shrived and Damodar",
+        "Independent confirmation of Deepak's Hyderabad location"
+      ]
+    }
+  ]
+}

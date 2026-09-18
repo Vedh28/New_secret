@@ -72,6 +72,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       SECRET_ENV: production
       CORS_ORIGINS: '["http://localhost:5173","http://localhost:8000"]'
+      EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-deterministic}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
     ports:
       - "8000:8000"
     depends_on:

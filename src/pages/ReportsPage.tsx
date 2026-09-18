@@ -14,29 +14,29 @@ const MODULES: { report_type: string; label: string }[] = [
 
 const DEMO_REPORTS: Record<string, { summary: string; metrics: [string, string][]; sections: [string, string][] }> = {
   investigation_summary: {
-    summary: "A consolidated view of the current investigation, priority entities and evidence gaps.",
-    metrics: [["Priority entities", "06"], ["Open evidence gaps", "03"], ["High-risk signals", "04"]],
-    sections: [["Executive readout", "The network contains a small number of high-leverage entities that should be reviewed first."], ["Recommended focus", "Validate the strongest cross-community relationships before expanding the investigation." ]],
+    summary: "Bandra, Mumbai sexual-assault investigation involving four named suspects, a stolen Hyundai Creta movement and two undisclosed members.",
+    metrics: [["Named suspects", "04"], ["Open evidence gaps", "02"], ["High-risk signals", "02"]],
+    sections: [["Executive readout", "Ramesh, Rajesh, Nihal and Guddu are linked to the current case narrative across Mumbai, Jaipur, Delhi and Bengal."], ["Recommended focus", "Corroborate Guddu's disclosure and reconstruct the Creta route from the Mumbai-Pune Highway to Delhi before treating links as proven." ]],
   },
   entity_intelligence: {
-    summary: "Entity-level risk, confidence and relationship context for the most relevant subjects.",
-    metrics: [["Entities ranked", "12"], ["High-risk entities", "04"], ["Avg confidence", "89%"]],
-    sections: [["Risk concentration", "The highest-risk subjects also carry the strongest bridge or coordination signals."], ["Validation need", "Confirm identity resolution and independently verify the top-ranked profiles." ]],
+    summary: "Entity-level view of Ramesh, Rajesh, Nihal, Guddu, Kaustubh, the Hyundai Creta and two unknown members.",
+    metrics: [["Entities ranked", "08"], ["Named suspects", "04"], ["Unknown members", "02"]],
+    sections: [["Risk concentration", "Guddu and Nihal are the highest-priority subjects because of the disclosure and cross-state vehicle movement."], ["Validation need", "Resolve the identities and locations of the two additional members; Guddu's prior Pune case is context, not proof." ]],
   },
   network_analysis: {
-    summary: "Structural analysis of communities, bridges and relationship density across the investigation graph.",
-    metrics: [["Communities", "03"], ["Bridge dependence", "HIGH"], ["Graph coverage", "78%"]],
-    sections: [["Network structure", "Three communities are connected through a limited number of high-importance bridge entities."], ["Operational implication", "Removing or validating a bridge relationship can materially change investigative priority." ]],
+    summary: "Relationship graph connecting the four named suspects, Kaustubh's vehicle and Guddu's two disclosure leads.",
+    metrics: [["Entities", "08"], ["Observed links", "06"], ["Evidence coverage", "61%"]],
+    sections: [["Network structure", "The current graph connects the suspect group through association, vehicle ownership/use and Guddu's disclosure statement."], ["Operational implication", "Identity resolution for the unknown members is the highest information-gain action." ]],
   },
   transaction_analysis: {
-    summary: "Transaction patterns and unusual value movements requiring analyst review.",
-    metrics: [["Transactions screened", "946"], ["Unusual patterns", "07"], ["High-value flags", "03"]],
-    sections: [["Signal summary", "A small cluster of high-value transfers is driving the current transaction anomaly score."], ["Next check", "Compare counterparties, timing and source reliability before treating the pattern as meaningful." ]],
+    summary: "Vehicle movement and theft evidence for Kaustubh's Hyundai Creta, mock plate MH-01-TEST-001.",
+    metrics: [["Vehicle", "CRETA"], ["Reported near", "MUMBAI-PUNE HWY"], ["Recovery city", "DELHI"]],
+    sections: [["Signal summary", "The vehicle was reported stolen near the Mumbai-Pune Highway and later associated with Nihal's apprehension in Delhi."], ["Next check", "Match toll, CCTV and recovery records to confirm the route and timing." ]],
   },
   communication_analysis: {
-    summary: "Communication activity, burst patterns and cross-community contact signals.",
-    metrics: [["Signals reviewed", "2.8K"], ["Communication bursts", "05"], ["Cross-community links", "02"]],
-    sections: [["Activity summary", "Recent communication bursts connect otherwise separate parts of the investigation graph."], ["Next check", "Review the burst window against location and transaction evidence for corroboration." ]],
+    summary: "Disclosure-led communication follow-up for Guddu and the two unidentified members.",
+    metrics: [["Disclosure source", "GUDDU"], ["Unknown members", "02"], ["Corroboration", "PENDING"]],
+    sections: [["Activity summary", "Guddu's statement is the current direct lead to two additional members; no independent communication evidence is asserted in this prototype."], ["Next check", "Review CDR, CCTV and witness statements before promoting either unknown member to a confirmed suspect." ]],
   },
 };
 

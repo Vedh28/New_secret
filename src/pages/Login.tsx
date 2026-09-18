@@ -2,17 +2,18 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { useAppStore } from "../store";
 import { ShieldCheck, Network, LockKeyhole, ArrowRight } from "lucide-react";
+import { prototypeCases, prototypeEntities, prototypeAlerts } from "../data/prototypeCase";
 
 const MESH_ITEMS = [
-  ["NODES", "1,248", "indexed"],
-  ["SOURCES", "86", "connected"],
-  ["LINKS", "3,902", "mapped"],
-  ["ENTITIES", "742", "resolved"],
-  ["ALERTS", "18", "active"],
-  ["CASES", "12", "tracked"],
-  ["COMMS", "2.8K", "signals"],
-  ["TXNS", "946", "screened"],
-  ["COVERAGE", "78%", "verified"],
+  ["CASES", String(prototypeCases.length), "active"],
+  ["SUSPECTS", "5", "named"],
+  ["UNKNOWN", "2", "disclosed"],
+  ["LOCATIONS", String(prototypeCases.reduce((sum, item) => sum + item.locations.length, 0)), "mapped"],
+  ["EVENTS", String(prototypeCases.reduce((sum, item) => sum + item.events.length, 0)), "linked"],
+  ["ALERTS", String(prototypeAlerts.length), "priority"],
+  ["VEHICLE", "1", "tracked"],
+  ["EVIDENCE", "57%", "covered"],
+  ["ENTITIES", String(prototypeEntities.length), "resolved"],
 ] as const;
 
 export function LoginScreen() {
@@ -64,11 +65,10 @@ export function LoginScreen() {
                 OFFLINE DEMO MODE (SYNTHETIC DATA)
               </button>
             </form>
-            <div className="meta">Demo operator: <b>admin</b> / <b>admin-secret</b></div>
           </div>
           <motion.div initial={{ opacity: 0.6, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 1.2 }} className="panel mini">
             <div className="row" style={{ justifyContent: "space-between" }}><h3 style={{ margin: 0 }}>Operational Mesh</h3><Network size={18} color="var(--blue)" /></div>
-            <p className="meta">Live graph indices, source registry, and community analytics once connected to the backend.</p>
+            <p className="meta">Bandra incident prototype with suspect locations, vehicle movement and open investigative leads.</p>
             <div className="mesh-grid">
               {MESH_ITEMS.map(([label, value, status]) => (
                 <button className="mesh-node" key={label} type="button" title={`${label}: ${value} ${status}`}>

@@ -5,12 +5,13 @@ sources for a case, with provenance (source_ids) and confidence.
 """
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, RequireAnalyst
 from app.models.case import Case
 from app.repositories.case_repository import CaseRepository
 from app.repositories.entity_repository import EntityRepository, RelationshipRepository
 from app.schemas.case_analytics import CommsResponse, LocationsResponse, TimelineEvent, TransResponse
-from app.schemas.entity import EntityRead, RelationshipRead
+from app.schemas.entity import EntityRead, EntityUpdate, RelationshipRead
+from app.services.audit_service import AuditService
 from app.services.case_analytics import CaseAnalyticsService
 
 router = APIRouter()
@@ -52,6 +53,113 @@ async def list_case_entities(
         )
         for e in rows
     ]
+
+
+@router.patch(
+    "/{case_key}/entities/{entity_id}",
+    response_model=EntityRead,
+    summary="Resolve or update a canonical case entity",
+)
+async def update_case_entity(
+    case_key: str,
+    entity_id: str,
+    payload: EntityUpdate,
+    session: DbSession,
+    user: RequireAnalyst,
+) -> EntityRead:
+    if payload.location_name and (payload.latitude is None or payload.longitude is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Enter both latitude and longitude to save a location",
+        )
+    case = await _resolve_case(session, case_key)
+    repo = EntityRepository(session)
+    entity = await repo.get_any_type(case.id, entity_id)
+    if entity is None:
+        if not entity_id.upper().startswith("UNKNOWN-"):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+        # A disclosure may identify an entity before a dedicated canonical row exists.
+        entity = await repo.create(
+            case_id=case.id,
+            entity_id=entity_id,
+            entity_type="PERSON",
+            name=entity_id,
+            confidence=0.0,
+            attributes={},
+            source_ids=[],
+        )
+
+    previous_name = entity.name
+    attributes = dict(entity.attributes or {})
+    resolution = dict(attributes.get("identity_resolution") or {})
+    resolution.update({
+        "previous_name": resolution.get("previous_name") or previous_name,
+        "resolved_name": payload.name,
+        "note": payload.note or resolution.get("note"),
+        "source_ids": payload.source_ids,
+        "status": "RESOLVED",
+    })
+    entity.name = payload.name
+    entity.confidence = payload.confidence
+    entity.source_ids = list(dict.fromkeys([*(entity.source_ids or []), *payload.source_ids]))
+    entity.attributes = {**attributes, "identity_resolution": resolution}
+    await repo.save(entity)
+    if payload.location_name:
+        location_id = f"LOCATION:{payload.location_name.strip().lower()}"
+        location = await repo.get_any_type(case.id, location_id)
+        if location is None:
+            location = await repo.create(
+                case_id=case.id,
+                entity_id=location_id,
+                entity_type="LOCATION",
+                name=payload.location_name.strip(),
+                confidence=payload.confidence,
+                attributes={
+                    "latitude": payload.latitude,
+                    "longitude": payload.longitude,
+                    "source_ids": payload.source_ids,
+                },
+                source_ids=payload.source_ids,
+            )
+        else:
+            location.name = payload.location_name.strip()
+            location.confidence = max(location.confidence, payload.confidence)
+            location.attributes = {
+                **(location.attributes or {}),
+                "latitude": payload.latitude,
+                "longitude": payload.longitude,
+            }
+            location.source_ids = list(dict.fromkeys([*(location.source_ids or []), *payload.source_ids]))
+            await repo.save(location)
+        rel_repo = RelationshipRepository(session)
+        relation = await rel_repo.get(case.id, "LOCATED_AT", entity_id, location_id)
+        if relation is None:
+            await rel_repo.create(
+                case_id=case.id,
+                rel_type="LOCATED_AT",
+                source_id=entity_id,
+                target_id=location_id,
+                confidence=payload.confidence,
+                source_ids=payload.source_ids,
+                attributes={"latitude": payload.latitude, "longitude": payload.longitude},
+            )
+    await AuditService(session).record(
+        user=user,
+        action="resolve_identity",
+        object_type="entity",
+        object_id=f"{case.case_number}:{entity_id}",
+        result={"previous_name": previous_name, "resolved_name": payload.name, "source_ids": payload.source_ids, "location": payload.location_name},
+    )
+    await session.commit()
+    return EntityRead(
+        entity_id=entity.entity_id,
+        entity_type=entity.entity_type,
+        name=entity.name,
+        confidence=entity.confidence,
+        attributes=entity.attributes or {},
+        source_ids=entity.source_ids or [],
+        created_at=entity.created_at,
+    )
 
 
 @router.get(

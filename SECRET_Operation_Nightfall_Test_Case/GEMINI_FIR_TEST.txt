@@ -1,0 +1,17 @@
+FICTIONAL TEST RECORD - DO NOT USE FOR REAL INVESTIGATIONS
+Case reference: CASE-GEMINI-TEST-001
+Source: FIR / police report
+Date: 2026-09-18
+Location: Bandra West, Mumbai
+
+On 18 September 2026, witness Meera Joshi reported that Ramesh was seen
+travelling with Rajesh near Bandra West. The report states that Ramesh used
+phone 9000000001 to contact Rajesh on phone 9000000002 at 21:10.
+
+Surveillance notes place both persons near a white Hyundai Creta bearing
+registration MH-01-TEST-001. The vehicle is registered to Kaustubh Mehta.
+The report records a possible movement from Bandra West to the Mumbai-Pune
+Highway. This movement is a lead and is not independently confirmed.
+
+Investigative status: Extract facts only. Do not infer guilt. Confirm all
+relationships against the original report and supporting evidence.

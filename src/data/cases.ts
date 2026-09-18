@@ -9,6 +9,7 @@
  * - Central & Gujarat Transit: Ahmedabad, Surat, Jaipur, Bhopal, Raipur
  */
 import type { CaseLocation, CaseMarker, LocationEvent } from "../types";
+import { prototypeCases } from "./prototypeCase";
 
 type LocSpec = {
   id: string;
@@ -232,6 +233,7 @@ const C104 = buildCase({
   })),
 });
 
-export const offlineCaseMarkers: CaseMarker[] = [C001, C101, C102, C103, C104];
+// Real cases are loaded from the backend or the Intake workflow.
+export const offlineCaseMarkers: CaseMarker[] = prototypeCases;
 
 export const casePriorityRank: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 };

@@ -186,9 +186,9 @@ export function NetworkGraph({
               <line
                 key={e.id}
                 x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                stroke={highlighted ? "var(--text)" : "rgba(63,115,255,0.55)"}
+                stroke={highlighted ? "#ff7b88" : "rgba(176,38,62,0.88)"}
                 strokeWidth={highlighted ? 2.4 : dimmed ? 0.5 : 1.1}
-                opacity={dimmed ? 0.12 : active ? 0.9 : 0.4}
+                opacity={dimmed ? 0.12 : active ? 0.96 : 0.78}
               />
             );
           })}

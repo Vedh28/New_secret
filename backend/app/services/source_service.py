@@ -9,8 +9,8 @@ from fastapi import HTTPException, status
 
 from app.core.config import get_settings
 from app.ingestion.adapters import normalize_record
-from app.ingestion.extraction import extract_many
 from app.ingestion.parsers import parse_source
+from app.ingestion.providers import get_extraction_provider
 from app.models.source import Source
 from app.repositories.case_repository import CaseRepository
 from app.repositories.entity_repository import EntityRepository, RelationshipRepository
@@ -165,7 +165,8 @@ class SourceService:
                 )
             )
 
-        extraction = extract_many(records)
+        extraction_provider = get_extraction_provider(get_settings().extraction_provider)
+        extraction = extraction_provider.extract(records)
         entity_map, relationship_map = await self._persist_extraction(case_id, source_id, extraction)
         metrics = {
             "records_processed": len(records),
@@ -173,6 +174,7 @@ class SourceService:
             "relationships_extracted": len(extraction.relationships),
             "entities_persisted": len(entity_map),
             "relationships_persisted": len(relationship_map),
+            "extraction_provider": extraction_provider.name,
         }
 
         source.status = "PROCESSED"

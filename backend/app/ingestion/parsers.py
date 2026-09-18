@@ -180,8 +180,8 @@ def _parse_csv(filename: str, content: bytes, source_type: str) -> ParsedFile:
     if not header_map:
         # No recognized headers -> treat as plain text.
         return ParsedFile(format="TEXT", raw_text=decoded,
-                          error=None, quality={"total": 1, "valid": 0, "invalid": 1,
-                                               "duplicates": 0, "quality_score": 0})
+                          error=None, quality={"total": 1, "valid": 1, "invalid": 0,
+                                               "duplicates": 0, "quality_score": 100})
     if _normalize_header(headers[0]) in {"", "_"}:
         return ParsedFile(format="TEXT", raw_text=decoded, error=None,
                           quality={"total": 0, "valid": 0, "invalid": 0, "duplicates": 0,
@@ -229,7 +229,7 @@ def _parse_json(content: bytes, source_type: str) -> ParsedFile:
                     format="JSON",
                     records=[record],
                     raw_text=text.strip(),
-                    quality={"total": 0, "valid": 0, "invalid": 0, "duplicates": 0, "quality_score": 0},
+                    quality={"total": 1, "valid": 1, "invalid": 0, "duplicates": 0, "quality_score": 100},
                 )
             nested = [data]
         if not isinstance(nested, list):
@@ -297,7 +297,7 @@ def _parse_text(source_type: str, content: bytes) -> ParsedFile:
         "text": stripped,
         "fields": {},
     }
-    quality = {"total": 0, "valid": 0, "invalid": 0, "duplicates": 0, "quality_score": 0}
+    quality = {"total": 1, "valid": 1, "invalid": 0, "duplicates": 0, "quality_score": 100}
     return ParsedFile(format="TEXT", records=[record], raw_text=stripped, quality=quality)
 
 

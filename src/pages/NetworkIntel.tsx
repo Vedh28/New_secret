@@ -89,16 +89,13 @@ export function NetworkIntel() {
       subtitle="High-density relationship analysis"
       rightMeta={
         <>
-          <div>{online ? "GRAPH ONLINE" : "SYNTHETIC MODE"}</div>
-          <div>{graph.nodes.length} NODES · {graph.edges.length} LINKS</div>
+          <div>{online ? "GRAPH ONLINE" : "AWAITING DATA"}</div>
         </>
       }
     >
       <div className="hud-network-layout">
         <HudCard label="Graph overview" title="Network Telemetry" className="hud-network-controls">
           <div className="hud-network-telemetry">
-            <div><span>Nodes indexed</span><strong>{graph.nodes.length}</strong></div>
-            <div><span>Active links</span><strong>{graph.edges.length}</strong></div>
             <div><span>Top connected entity</span><strong>{hot[0]?.node.name ?? "Awaiting data"}</strong></div>
             <div><span>Evidence coverage</span><strong>{caseIntel?.network_dna?.evidence_coverage ?? 78}%</strong></div>
             <div><span>Communities mapped</span><strong>{clusterCount}</strong></div>
@@ -112,10 +109,6 @@ export function NetworkIntel() {
               nodes={graph.nodes}
               edges={graph.edges}
             />
-          </div>
-          <div className="hud-network-overlay">
-            <div className="glass-strip">{clusterCount} clusters mapped</div>
-            <div className="glass-strip">{graph.edges.length} active paths</div>
           </div>
         </HudCard>
 

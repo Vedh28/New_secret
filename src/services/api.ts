@@ -803,6 +803,31 @@ export async function apiListAudit(limit = 50): Promise<AuditEntry[]> {
   return request<AuditEntry[]>(`/api/v1/audit?limit=${limit}`);
 }
 
+export interface CaseEntity {
+  entity_id: string;
+  entity_type: string;
+  name: string;
+  confidence: number;
+  attributes: Record<string, unknown>;
+  source_ids: string[];
+  created_at: string;
+}
+
+export async function apiUpdateCaseEntity(caseKey: string, entityId: string, input: {
+  name: string;
+  confidence: number;
+  source_ids: string[];
+  note?: string;
+  location_name?: string;
+  latitude?: number;
+  longitude?: number;
+}): Promise<CaseEntity> {
+  return request<CaseEntity>(`/api/v1/cases/${encodeURIComponent(caseKey)}/entities/${encodeURIComponent(entityId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function apiRecordAudit(payload: {
   action: string;
   object_type?: string;

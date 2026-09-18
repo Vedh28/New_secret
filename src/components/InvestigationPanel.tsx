@@ -83,6 +83,7 @@ export function MapControls() {
   const showLocations = useMapStore((s) => s.showLocations);
   const showRoutes = useMapStore((s) => s.showRoutes);
   const showLabels = useMapStore((s) => s.showLabels);
+  const selectedCaseId = useMapStore((s) => s.selectedCaseId);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [showResults, setShowResults] = useState(false);
@@ -282,12 +283,15 @@ export function MapControls() {
         </button>
         <button
           className="pill map-control-btn"
-          disabled={!store.getState().selectedCaseId}
+          disabled={!markers.length}
           onClick={() => {
-            const id = store.getState().selectedCaseId;
-            if (id) store.getState().requestCamera("fit-case", id);
+            const state = store.getState();
+            const id = state.selectedCaseId ?? state.markers[0]?.caseId;
+            if (!id) return;
+            state.selectCase(id);
+            state.requestCamera("fit-case", id);
           }}
-          title="Fit selected case"
+          title="Fly to the active case at maximum close-up"
         >
           <Crosshair size={12} /> FIT CASE
         </button>

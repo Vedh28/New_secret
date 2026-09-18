@@ -10,7 +10,6 @@ export function SettingsPage() {
         <HudCard label="Profile" title="Interface Core" className="hud-settings-profile">
           <div className="hud-settings-profile-head"><div className="hud-settings-avatar">S</div><div><strong>SECRET Operator</strong><span>ADMIN ACCESS</span></div></div>
           <div className="meta">Professional desktop configuration surface for intelligence operations.</div>
-          <div className="hud-settings-profile-grid"><div><span>WORKSPACE</span><strong>OPERATIONS</strong></div><div><span>SESSION</span><strong>SECURE</strong></div><div><span>MODE</span><strong>DEMO DATA</strong></div><div><span>SYNC</span><strong>READY</strong></div></div>
         </HudCard>
         <HudCard label="Preference module" title="Interface Density" className="hud-settings-controls">
           <div className="meta">Choose how much information each workspace panel should show.</div>

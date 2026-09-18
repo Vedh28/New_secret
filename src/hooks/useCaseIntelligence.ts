@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useBackendStore } from "../store/backend";
 import { apiCaseIntelligence, type CaseIntelligence } from "../services/api";
+import { prototypeIntelligence, prototypeIntelligenceByCase } from "../data/prototypeCase";
 
 /**
  * Fetch case intelligence for a caseKey. Falls back to a locally-composed
@@ -75,12 +76,12 @@ export function useCaseIntelligence(caseKey: string) {
         .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load"); setIntel(null); })
         .finally(() => setLoading(false));
     } else if (backend !== "backend") {
-      setIntel(OFFLINE_INTELLIGENCE);
+      setIntel(prototypeIntelligenceByCase[caseKey] ?? prototypeIntelligence);
       setError(null);
     } else {
       setIntel(null);
     }
   }, [backend, caseKey]);
 
-  return { intel, loading, error, offline: backend !== "backend", offlineIntel: OFFLINE_INTELLIGENCE };
+  return { intel, loading, error, offline: backend !== "backend", offlineIntel: prototypeIntelligenceByCase[caseKey] ?? prototypeIntelligence };
 }

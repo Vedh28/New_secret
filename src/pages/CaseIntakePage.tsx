@@ -22,6 +22,7 @@ import {
   type SourceType,
 } from "../services/intake";
 import { DEMO_FILES } from "../data/demoCorpus";
+import { prototypeCases } from "../data/prototypeCase";
 
 interface QueueItem {
   id: string;
@@ -45,10 +46,26 @@ const PROCESS_STAGES = [
   "UPLOAD",
   "VALIDATE",
   "PARSE",
+  "EXTRACT ENTITIES",
+  "BUILD RELATIONSHIPS",
   "PERSIST",
   "GRAPH UPDATE",
   "ANALYTICS",
+  "DETECT ANOMALIES",
+  "ACTIONABLE OUTPUT",
+  "READY",
 ];
+
+const prototypeCaseReads: CaseRead[] = prototypeCases.map((item, index) => ({
+  id: index + 1,
+  case_number: item.caseId,
+  title: item.title,
+  description: item.title,
+  status: item.status,
+  priority: item.priority,
+  created_at: item.lastActivity,
+  updated_at: item.lastActivity,
+}));
 
 export function CaseIntakePage() {
   const backend = useBackendStore((s) => s.mode);
@@ -67,10 +84,21 @@ export function CaseIntakePage() {
   const nextId = useRef(1);
 
   useEffect(() => {
+    if (backend !== "backend") {
+      setCases(prototypeCaseReads);
+      setSelectedCase((prev) => prev || prototypeCaseReads[0]?.case_number || "");
+      return;
+    }
     apiListCases({ limit: 100 })
-      .then((res: CaseTotal) => setCases(res.items))
-      .catch(() => setCases([]));
-  }, []);
+      .then((res: CaseTotal) => {
+        setCases(res.items);
+        setSelectedCase((prev) => prev || res.items[0]?.case_number || "");
+      })
+      .catch(() => {
+        setCases(prototypeCaseReads);
+        setSelectedCase((prev) => prev || prototypeCaseReads[0]?.case_number || "");
+      });
+  }, [backend]);
 
   const selectedCaseRead = useMemo(() => cases.find((c) => c.case_number === selectedCase) ?? null, [cases, selectedCase]);
 
@@ -117,6 +145,10 @@ export function CaseIntakePage() {
   const removeFile = (id: string) => setQueue((q) => q.filter((x) => x.id !== id));
 
   const createCaseFlow = async () => {
+    if (backend !== "backend") {
+      setError("Live backend access is required to create a case. Sign in instead of using Offline Demo Mode.");
+      return;
+    }
     if (!newCase.title.trim()) {
       setError("Enter a case name to create an investigation.");
       return;
@@ -184,6 +216,7 @@ export function CaseIntakePage() {
         setStage("READY");
         const entities = processed.reduce((s, r) => s + Number(r.metrics.entities_persisted ?? 0), 0);
         const relationships = processed.reduce((s, r) => s + Number(r.metrics.relationships_persisted ?? 0), 0);
+        const processedBySource = new Map(processed.map((item) => [item.source_id, item]));
         setResults({
           mode: "live",
           sources: uploads.length,
@@ -192,7 +225,15 @@ export function CaseIntakePage() {
           entities,
           relationships,
           alerts_created: alertsCreated,
-          uploads: uploads.map((u) => ({ source_id: u.source_id, filename: u.filename, status: u.status, format: u.format, quality: u.quality, error: u.error })),
+          extraction_provider: processed.find((item) => item.metrics.extraction_provider)?.metrics.extraction_provider ?? "deterministic",
+          uploads: uploads.map((u) => ({
+            source_id: u.source_id,
+            filename: u.filename,
+            status: processedBySource.get(u.source_id)?.status ?? u.status,
+            format: u.format,
+            quality: u.quality,
+            error: u.error,
+          })),
         });
       } else {
         // Offline demo mode: local analysis only — never fake a backend write.
@@ -265,9 +306,12 @@ export function CaseIntakePage() {
                 <select className="control hud-search" value={newCase.status} onChange={(e) => setNewCase({ ...newCase, status: e.target.value })} aria-label="Status">
                   {["OPEN", "IN_PROGRESS", "CLOSED", "ARCHIVED"].map((s) => <option key={s}>{s}</option>)}
                 </select>
-                <button className="cta" onClick={createCaseFlow} disabled={creating}>{creating ? "CREATING..." : "CREATE CASE"}</button>
+                <button className="cta" onClick={createCaseFlow} disabled={creating || backend !== "backend"}>
+                  {creating ? "CREATING..." : backend === "backend" ? "CREATE CASE" : "SIGN IN TO CREATE"}
+                </button>
               </div>
             </div>
+            {backend !== "backend" && <div className="meta" style={{ marginTop: 8 }}>Offline demo is view-only. Sign in to persist new cases and uploaded sources.</div>}
           </div>
         </HudCard>
 
@@ -349,8 +393,8 @@ export function CaseIntakePage() {
         {/* ---- Process + results ---- */}
         <HudCard label="Pipeline" title="Process case data">
           <div className="filters hud-filters">
-            <button className="cta" onClick={runProcess} disabled={processing || !selectedCase || queue.length === 0}>
-              {processing ? "PROCESSING..." : "PROCESS CASE DATA"}
+            <button className="cta" onClick={runProcess} disabled={processing || !selectedCase || queue.length === 0 || backend !== "backend"}>
+              {processing ? "PROCESSING..." : backend === "backend" ? "PROCESS CASE DATA" : "SIGN IN TO PROCESS"}
             </button>
             <button className="pill" onClick={importDemo} disabled={processing}>IMPORT DEMO CASE (CDR)</button>
           </div>
@@ -380,6 +424,7 @@ export function CaseIntakePage() {
                     { label: "Entities persisted", value: Number(results.entities).toLocaleString() },
                     { label: "Relationships persisted", value: Number(results.relationships).toLocaleString() },
                     { label: "Alert indicators", value: String(results.alerts_created ?? 0) },
+                    { label: "Extraction provider", value: String(results.extraction_provider ?? "deterministic") },
                   ]}
                 />
               ) : null}

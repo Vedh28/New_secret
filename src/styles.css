@@ -69,7 +69,7 @@ mask-image:radial-gradient(circle at center, rgba(0,0,0,.28), transparent 74%);
 opacity:.11}
 button,input{font:inherit}
 .app-shell{display:block;min-height:100%;position:relative}
-.app-background-globe{position:fixed;inset:0;z-index:0;pointer-events:auto;overflow:hidden;transform:translateY(82px)}
+.app-background-globe{position:fixed;top:82px;right:0;bottom:0;left:0;z-index:0;pointer-events:auto;overflow:hidden}
 .app-background-globe .globe-shell{position:absolute;inset:0}
 .app-background-globe .globe-canvas-host,
 .app-background-globe .globe-shell canvas{position:absolute !important;inset:0 !important;pointer-events:auto}
@@ -94,6 +94,11 @@ radial-gradient(circle at 50% 20%, rgba(58,111,255,.12), transparent 20%),
 radial-gradient(circle at 50% 48%, rgba(67,170,255,.05), transparent 24%);
 filter:blur(8px)}
 .command-center{gap:18px;position:relative}
+.command-map-controls{position:fixed;left:50%;bottom:18px;width:min(780px,calc(100vw - 32px));transform:translateX(-50%);z-index:4}
+.command-map-controls .map-controls{width:100%;box-sizing:border-box}
+.top-priority-dock{position:fixed;left:20px;top:104px;width:min(370px,calc(100vw - 40px));z-index:5;padding:16px 14px;border:1px solid rgba(76,108,205,.2);border-radius:12px;background:linear-gradient(180deg,rgba(12,17,36,.82),rgba(7,10,20,.78));box-shadow:0 18px 40px rgba(0,0,0,.36),inset 0 0 0 1px rgba(255,255,255,.02);backdrop-filter:blur(12px)}
+.top-priority-dock::before,.top-priority-dock::after{content:"";position:absolute;top:8px;width:18px;height:2px;background:rgba(63,115,255,.55)}.top-priority-dock::before{left:8px}.top-priority-dock::after{right:8px}
+.top-priority-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}.top-priority-heading .hud-label{margin-bottom:5px;color:#88adff}.top-priority-heading strong{font-size:15px;font-weight:600}.top-priority-live{display:inline-flex;align-items:center;gap:4px;color:#93a0c2;font:600 8px/1 "Fira Code",monospace;letter-spacing:.08em;white-space:nowrap}.top-priority-list{display:grid;gap:8px}.priority-flip-card{display:block;width:100%;height:92px;padding:0;border:0;background:transparent;color:inherit;text-align:left;perspective:900px;cursor:pointer}.priority-flip-inner{position:relative;display:block;width:100%;height:100%;transition:transform .42s ease;transform-style:preserve-3d}.priority-flip-card.is-flipped .priority-flip-inner{transform:rotateY(180deg)}.priority-face{position:absolute;inset:0;display:flex;align-items:center;gap:11px;padding:11px 12px;border:1px solid rgba(76,108,205,.2);border-radius:9px;background:rgba(255,255,255,.018);box-shadow:none;backface-visibility:hidden}.priority-flip-card:hover .priority-face,.priority-flip-card.is-selected .priority-face{border-color:rgba(98,211,255,.46);background:rgba(63,115,255,.06);box-shadow:inset 0 0 0 1px rgba(98,211,255,.05)}.priority-face::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:2px;background:rgba(63,115,255,.7)}.priority-rank{color:#9fc0ff;font:600 13px/1 "Fira Code",monospace}.priority-rank small{color:#7f91b4;font-size:8px}.priority-face-copy{display:grid;min-width:0;gap:3px;flex:1}.priority-case-id,.priority-back-kicker{color:#88adff;font:600 9px/1 "Fira Code",monospace;letter-spacing:.12em;text-transform:uppercase}.priority-face strong{overflow:hidden;color:#f4f6ff;font-size:13px;line-height:1.2;font-weight:600;text-overflow:ellipsis;white-space:nowrap}.priority-metrics{color:#7f91b4;font:600 9px/1 "Fira Code",monospace;letter-spacing:.04em}.priority-metrics b{color:#d6e6ff;font-size:11px}.priority-metrics i{font-style:normal;color:#7f91b4;margin-left:8px}.priority-arrow{margin-left:auto;flex:0 0 auto;color:#88adff}.priority-back{transform:rotateY(180deg);display:grid;align-content:center;justify-items:start;gap:5px;padding:13px 17px}.priority-back-kicker{display:flex;align-items:center;gap:5px;color:#88adff;line-height:1}.priority-back > strong{max-width:78%;font-size:15px;line-height:1.15;font-weight:600}.priority-back > span:not(.priority-back-kicker){color:#9fc0ff;font:600 9px/1 "Fira Code",monospace;letter-spacing:.08em}.priority-back small{color:#93a0c2;font-size:10px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:82%}.top-priority-hint{margin-top:10px;color:#7f91b4;font:500 9px/1.3 "Fira Code",monospace;letter-spacing:.04em}
 .top-nav{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 18px 8px;position:sticky;top:0;z-index:10;isolation:isolate;background:rgba(5,8,22,.98);backdrop-filter:blur(18px);border-bottom:0}
 .command-shell .top-nav::before{content:"";position:absolute;inset:-28px 0 -24px;z-index:-1;background:rgba(5,8,22,.98);backdrop-filter:blur(18px);pointer-events:none}
 .top-nav-brand{display:flex;align-items:center;gap:12px;min-width:240px}
@@ -386,6 +391,7 @@ linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);background-bl
 .timeline-dot{width:12px;height:12px;border-radius:50%;margin-top:14px;background:radial-gradient(circle, #dff8ff 0 20%, rgba(63,115,255,.85) 20% 50%, rgba(63,115,255,.12) 50%);box-shadow:0 0 16px rgba(63,115,255,.4)}
 .timeline-card{padding:14px;border-radius:14px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06)}
 .hud-alert-layout{grid-template-columns:.8fr 1.2fr}
+.hud-alert-summary{display:flex;align-items:baseline;gap:10px;margin-top:14px;padding:14px;border:1px solid rgba(63,115,255,.2);border-radius:10px;background:linear-gradient(90deg,rgba(63,115,255,.1),rgba(63,115,255,.02))}.hud-alert-summary strong{font:700 28px/1 "Fira Code",monospace;color:#dff8ff}.hud-alert-summary span{font-size:12px;color:var(--muted)}
 .hud-simulation-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:16px;margin-top:16px}
 .hud-simulation-stack{display:grid;gap:16px;min-width:0}
 .hud-simulation-layout > .hud-card{min-width:0}
@@ -448,13 +454,12 @@ linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);background-bl
 .command-center .hud-grid{grid-template-columns:286px minmax(520px,1fr) 324px;gap:18px}
 .command-center .hud-col{gap:14px}
 .command-center .hud-hero{min-height:214px}
-.command-center .hud-center{gap:10px;margin-top:100px}
-.command-center .hud-overview-panel{transform:translateY(70px)}
-.command-center .hud-dna-panel{margin-top:80px}
-.command-center .hud-recent-intelligence{visibility:hidden;opacity:0;pointer-events:none}
+.command-center .hud-center{gap:10px;margin-top:24px}
+.command-center .hud-overview-panel{transform:none}
+.command-center .hud-dna-panel{margin-top:18px}
 .command-center .hud-bottom{grid-template-columns:1fr 1.2fr .95fr}
-.command-center .hud-bottom-command > .hud-card:nth-child(2){margin-top:28px}
-.command-center .hud-grid > .hud-col:first-child > .hud-card:last-child{margin-top:60px}
+.command-center .hud-bottom-command > .hud-card:nth-child(2){margin-top:0}
+.command-center .hud-grid > .hud-col:first-child > .hud-card:last-child{margin-top:0}
 .case-intelligence-flip{perspective:1200px;min-height:270px;outline:none}
 .case-intelligence-flip-inner{position:relative;min-height:270px;transform-style:preserve-3d;transition:transform .55s cubic-bezier(.2,.7,.2,1)}
 .case-intelligence-flip:hover .case-intelligence-flip-inner,.case-intelligence-flip:focus-visible .case-intelligence-flip-inner{transform:rotateY(180deg)}
@@ -490,6 +495,7 @@ linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);background-bl
   .command-center .hud-overview-panel{transform:translateY(32px)}
   .command-center .hud-dna-panel{margin-top:32px}
   .command-center .hud-grid > .hud-col:first-child > .hud-card:last-child{margin-top:24px}
+  .command-map-controls{bottom:10px;width:calc(100vw - 20px)}
 }
 @media (max-width: 1200px){
   .app-shell{display:block}
@@ -520,6 +526,10 @@ linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);background-bl
 .map-tooltip-row span{color:var(--muted);text-transform:uppercase}
 .map-tooltip-row strong{color:#d6e6ff}
 .map-tooltip-priority{color:#ffd46a}
+.map-profile-tooltip{min-width:250px;border-color:rgba(98,211,255,.5);box-shadow:0 14px 34px rgba(0,0,0,.46),0 0 26px rgba(98,211,255,.14)}
+.map-tooltip-kicker{color:#62d3ff;font:700 10px/1.2 "Fira Code",monospace;letter-spacing:.16em;margin-bottom:6px}
+.map-tooltip-entities{margin-top:8px;color:#9fb9df;font:500 10px/1.35 "Outfit",sans-serif}
+.map-selected-case{position:absolute;left:50%;top:18px;z-index:4;transform:translateX(-50%);max-width:calc(100% - 32px);padding:9px 16px;border:1px solid rgba(98,211,255,.38);border-radius:999px;background:rgba(5,8,22,.78);box-shadow:0 0 22px rgba(63,115,255,.14);backdrop-filter:blur(10px);color:#e8efff;font:700 13px/1.2 "Outfit",system-ui,sans-serif;letter-spacing:.05em;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .map-controls{display:grid;gap:10px;padding:12px;border-radius:14px;background:rgba(7,12,30,.6);border:1px solid rgba(76,108,205,.22);backdrop-filter:blur(10px)}
 .map-search-bar-wrap{position:relative;width:100%}
 .map-search-form{position:relative;display:flex;align-items:center}
@@ -563,3 +573,9 @@ linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px);background-bl
 .map-intel-evidence-list{display:grid;gap:8px;margin-top:10px;max-height:220px;overflow:auto;padding-right:4px}
 .map-intel-evidence-item{padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.05);background:rgba(255,255,255,.015)}
 .map-evidence-note{color:var(--muted);font-size:11px;font-style:italic}
+.priority-back{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;padding:13px 46px 13px 17px}
+.priority-back-kicker{line-height:1.15}
+.priority-back > strong{display:block;line-height:1.2}
+.priority-back > span:not(.priority-back-kicker){display:block;line-height:1.2}
+.priority-back small{display:block;line-height:1.25}
+.priority-back .priority-arrow{position:absolute;right:17px;top:50%;margin:0;transform:translateY(-50%)}

@@ -1,27 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { HudPage } from "../components/HudPage";
 import { HudCard } from "../components/HudPrimitives";
-import { alerts as mockAlerts } from "../data/mock";
 import { apiCaseAlerts, apiGenerateAlerts, apiUpdateAlert, type AlertRead } from "../services/api";
 import { useCaseSelection } from "../services/useCaseSelection";
+import { prototypeAlerts } from "../data/prototypeCase";
 
 const FILTERS = ["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
-
-const DEMO_ALERTS: AlertRead[] = mockAlerts.map((alert, index) => ({
-  id: 9000 + index,
-  case_id: null,
-  profile_id: null,
-  severity: alert.severity,
-  status: index === 0 ? "NEW" : "REVIEWING",
-  score: 91 - index * 9,
-  title: alert.title,
-  description: "Synthetic indicator generated from the offline intelligence feed.",
-  source_ids: [`DEMO-${String(index + 1).padStart(2, "0")}`],
-  confidence: 0.86 - index * 0.04,
-  reviewed_by: null,
-  reviewed_at: null,
-  created_at: `2026-09-11T${alert.time}+05:30`,
-}));
 
 export function AlertsPage() {
   const { backend, cases, caseKey, setCaseKey } = useCaseSelection();
@@ -64,36 +48,22 @@ export function AlertsPage() {
 
   useEffect(() => {
     if (backend === "backend" && caseKey) void load(caseKey);
-    else if (backend !== "backend") setAlerts(DEMO_ALERTS);
+    else if (backend !== "backend") setAlerts(prototypeAlerts.filter((alert) => alert.case_id === caseKey));
   }, [backend, caseKey, load]);
 
   const list = alerts.filter((a) => filter === "ALL" || a.severity === filter);
-  const severityCounts = FILTERS.slice(1).map((severity) => ({
-    severity,
-    count: alerts.filter((alert) => alert.severity === severity).length,
-  }));
-
   return (
     <HudPage
       title="ALERT CENTER"
-      subtitle={backend === "backend" ? "Indicator alerts computed from persisted analytics" : "Offline demo · synthetic intelligence feed"}
+      subtitle="Indicator alerts computed from persisted analytics"
       rightMeta={<><div>{list.length} SIGNALS</div>{backend === "backend" ? <div>LIVE</div> : <div>DEMO</div>}</>}
     >
       <div className="hud-alert-layout">
-        <HudCard label="Alert queue" title={backend === "backend" ? "Severity Filter" : "Synthetic mode"} className="hud-alert-filter">
+        <HudCard label="Alert queue" title="Severity Filter" className="hud-alert-filter">
           <div className="filters hud-filters">
             {FILTERS.map((f) => <button key={f} className={`pill ${filter === f ? "selected" : ""}`} onClick={() => setFilter(f)}>{f}{f === "ALL" ? ` · ${alerts.length}` : ` · ${alerts.filter((alert) => alert.severity === f).length}`}</button>)}
           </div>
-          <div className="hud-alert-visual" aria-label={`${list.length} active signals`}>
-            <div className="hud-alert-scan" />
-            <div className="hud-alert-orbit hud-alert-orbit-one"><i /><i /><i /></div>
-            <div className="hud-alert-orbit hud-alert-orbit-two"><i /><i /></div>
-            <div className="hud-alert-core"><span>{list.length}</span><small>ACTIVE SIGNALS</small></div>
-            <div className="hud-alert-wave" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /></div>
-          </div>
-          <div className="hud-alert-breakdown">
-            {severityCounts.map(({ severity, count }) => <div key={severity}><span>{severity}</span><strong>{count}</strong></div>)}
-          </div>
+          <div className="hud-alert-summary"><strong>{list.length}</strong><span>signals match the current filter</span></div>
           {backend === "backend" && (
             <>
               <select className="control hud-search" value={caseKey} onChange={(e) => { setCaseKey(e.target.value); void load(e.target.value); }}>

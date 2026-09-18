@@ -7,5 +7,6 @@ dist-electron
 release-fresh
 release-new
 .vite
+*.log
 .DS_Store
 Thumbs.db

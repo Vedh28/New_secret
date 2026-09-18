@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { Section, Entity } from "./types";
-import { entities } from "./data/mock";
 import { apiLogin, apiMe, setAccessToken } from "./services/api";
 
 type State = {
@@ -24,7 +23,7 @@ type State = {
 
 export const useAppStore = create<State>((set, get) => ({
   section: "login",
-  selectedEntity: entities[0],
+  selectedEntity: null,
   sidebarCollapsed: true,
   loginComplete: false,
   alertFilter: "ALL",

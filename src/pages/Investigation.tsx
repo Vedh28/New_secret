@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { entities as mockEntities } from "../data/mock";
 import { useAppStore } from "../store";
 import { useBackendStore } from "../store/backend";
 import { apiListCriminals, apiListCaseEntities, apiListCaseRelationships, apiListCases, type CaseRead, type EntityRead, type CriminalProfile } from "../services/api";
@@ -7,13 +6,14 @@ import { HudPage } from "../components/HudPage";
 import { HudCard, HoloList, StatRow } from "../components/HudPrimitives";
 import { IntelligenceSummary, PriorityPanel, RecommendationList, GapList } from "../components/IntelligenceUi";
 import { useCaseIntelligence } from "../hooks/useCaseIntelligence";
+import { prototypeCases, prototypeEntities } from "../data/prototypeCase";
 
 type AnyEntity = { id: string; type: string; name: string; risk?: number; confidence?: number; aliases?: string[]; relationships?: number; sources?: number; lastActivity?: string };
 
 export function Investigation() {
   const backend = useBackendStore((s) => s.mode);
   const [cases, setCases] = useState<CaseRead[]>([]);
-  const [caseKey, setCaseKey] = useState<string | null>(null);
+  const [caseKey, setCaseKey] = useState<string | null>(prototypeCases[0]?.caseId ?? null);
   const [entities, setEntities] = useState<EntityRead[]>([]);
   const [relationships, setRelationships] = useState<number>(0);
   const [profiles, setProfiles] = useState<CriminalProfile[]>([]);
@@ -58,11 +58,7 @@ export function Investigation() {
 
   const rows: AnyEntity[] = useMemo(() => {
     if (backend !== "backend") {
-      return mockEntities.map((e) => ({
-        id: e.id, type: e.type, name: e.name, risk: e.risk,
-        confidence: e.confidence, aliases: e.aliases,
-        relationships: e.relationships, lastActivity: e.lastActivity,
-      }));
+      return prototypeEntities;
     }
     const merged: AnyEntity[] = entities.map((e) => ({
       id: e.entity_id, type: e.entity_type, name: e.name,
@@ -81,10 +77,14 @@ export function Investigation() {
   const activeCase = cases.find((c) => c.case_number === caseKey) ?? cases[0];
 
   if (backend !== "backend") {
+    const activePrototypeCase = prototypeCases.find((item) => item.caseId === caseKey) ?? prototypeCases[0];
     return (
-      <HudPage className="investigation-page" title={activeCase?.case_number ?? "CASE-2026-0817"} subtitle={activeCase?.title ?? "Organized Network Analysis"} rightMeta={<><div>OFFLINE DEMO</div></>}>
+      <HudPage className="investigation-page" title={activePrototypeCase?.caseId ?? "INVESTIGATIONS"} subtitle={activePrototypeCase?.title ?? "Awaiting case data"} rightMeta={<><div>PROTOTYPE CASE</div><div>{rows.length} ENTITIES</div></>}>
         <div className="hud-investigation-layout">
           <HudCard label="Case graph" title="Network View" className="hud-investigation-list">
+            <select className="control" value={caseKey ?? ""} onChange={(e) => setCaseKey(e.target.value)} style={{ marginBottom: 10 }}>
+              {prototypeCases.map((item) => <option key={item.caseId} value={item.caseId}>{item.caseId} · {item.title}</option>)}
+            </select>
             <div className="table">
               {rows.map((e) => (
                 <button key={e.id} className={`entity ${selectedEntity?.id === e.id ? "selected" : ""}`} onClick={() => setSelectedEntity(e as never)}>

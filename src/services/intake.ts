@@ -13,6 +13,7 @@ export type SourceType =
   | "VEHICLE"
   | "SURVEILLANCE"
   | "INTELLIGENCE"
+  | "CRIMINAL_HISTORY"
   | "LOCATION"
   | "SOCIAL"
   | "OTHER";
@@ -24,6 +25,7 @@ export const SOURCE_TYPES: { id: SourceType; label: string; match: RegExp }[] = 
   { id: "VEHICLE", label: "Vehicle Records", match: /veh|vehicle|reg|plate|chassis/i },
   { id: "SURVEILLANCE", label: "Surveillance", match: /surv|cctv|watch|monitor|camera/i },
   { id: "INTELLIGENCE", label: "Intelligence Reports", match: /intel|intelligence|info|brief/i },
+  { id: "CRIMINAL_HISTORY", label: "Criminal History", match: /criminal|history|conviction|bail|custody/i },
   { id: "LOCATION", label: "Location Data", match: /loc|geo|coordinate|sector|position/i },
   { id: "SOCIAL", label: "Social Intelligence", match: /social|post|message|chat|media/i },
 ];

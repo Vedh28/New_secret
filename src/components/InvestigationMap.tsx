@@ -12,6 +12,7 @@ import type { Map as MapLibreMap, MapMouseEvent, IControl, MapGeoJSONFeature, Cu
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useMapStore } from "../store/mapStore";
 import type { CaseMarker } from "../types";
+import { prototypeEntities } from "../data/prototypeCase";
 
 const INDIA_CENTER: [number, number] = [78.9629, 20.5937];
 const INDIA_BOUNDS: [[number, number], [number, number]] = [[67, 6.5], [98, 37.2]];
@@ -49,6 +50,34 @@ const MAP_COLORS = {
   textAccent: "#62d3ff",
   textHalo: "#050816",
 };
+function curvedRoute(points: number[][]): number[][] {
+  if (points.length < 2) return points;
+  const coordinates: number[][] = [];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const distance = Math.hypot(dx, dy);
+    const bulge = Math.min(3.2, Math.max(0.18, distance * 0.075));
+    const normalX = distance ? -dy / distance : 0;
+    const normalY = distance ? dx / distance : 0;
+    const control: [number, number] = [
+      (start[0] + end[0]) / 2 + normalX * bulge,
+      (start[1] + end[1]) / 2 + normalY * bulge,
+    ];
+    for (let step = 0; step <= 18; step += 1) {
+      if (index > 0 && step === 0) continue;
+      const t = step / 18;
+      const inverse = 1 - t;
+      coordinates.push([
+        inverse * inverse * start[0] + 2 * inverse * t * control[0] + t * t * end[0],
+        inverse * inverse * start[1] + 2 * inverse * t * control[1] + t * t * end[1],
+      ]);
+    }
+  }
+  return coordinates;
+}
 const BUILDING_COLOR = [
   "interpolate", ["linear"], BUILDING_HEIGHT,
   0, "#131d3d", 30, "#183052", 90, "#1d4566", 220, "#2a6f98", 420, "#62a8d4",
@@ -67,17 +96,17 @@ function priorityColor(priority: string): string {
 }
 
 function routeColor(priority: string): string {
-  if (priority === "HIGH") return "#76501f";
-  if (priority === "MEDIUM") return "#1b5875";
-  return "#1d4658";
+  if (priority === "HIGH") return "#762532";
+  if (priority === "MEDIUM") return "#5f202d";
+  return "#421923";
 }
 
 function centerOf(marker: CaseMarker): [number, number] | null {
   if (!marker.locations.length) return null;
-  return [
-    marker.locations.reduce((sum, location) => sum + location.longitude, 0) / marker.locations.length,
-    marker.locations.reduce((sum, location) => sum + location.latitude, 0) / marker.locations.length,
-  ];
+  const primary = marker.locations.reduce((best, location) => (
+    location.importance > best.importance ? location : best
+  ));
+  return [primary.longitude, primary.latitude];
 }
 
 function primaryLocation(marker: CaseMarker): CaseMarker["locations"][number] | null {
@@ -218,11 +247,25 @@ function addMapLayers(map: MapLibreMap) {
   }
 
   if (!map.getSource("secret-data")) map.addSource("secret-data", { type: "geojson", data: featureCollection([]) });
+  if (!map.getLayer("secret-route-glass")) {
+    map.addLayer({
+      id: "secret-route-glass", type: "line", source: "secret-data", filter: ["==", ["get", "kind"], "route"],
+      layout: { visibility: "visible", "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#d94a5f", "line-width": 12, "line-opacity": 0.06, "line-blur": 6 },
+    });
+  }
+  if (!map.getLayer("secret-route-frost")) {
+    map.addLayer({
+      id: "secret-route-frost", type: "line", source: "secret-data", filter: ["==", ["get", "kind"], "route"],
+      layout: { visibility: "visible", "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": ["get", "routeColor"], "line-width": 7, "line-opacity": 0.16, "line-blur": 2.2 },
+    });
+  }
   if (!map.getLayer("secret-routes")) {
     map.addLayer({
       id: "secret-routes", type: "line", source: "secret-data", filter: ["==", ["get", "kind"], "route"],
       layout: { visibility: "visible", "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "routeColor"], "line-width": 1.65, "line-opacity": 0.48, "line-dasharray": [1.2, 2.8] },
+      paint: { "line-color": ["get", "routeColor"], "line-width": 1.8, "line-opacity": 0.82 },
     });
   }
   if (!map.getLayer("secret-cases")) {
@@ -234,14 +277,27 @@ function addMapLayers(map: MapLibreMap) {
   if (!map.getLayer("secret-case-halos")) {
     map.addLayer({
       id: "secret-case-halos", type: "circle", source: "secret-data", filter: ["==", ["get", "kind"], "case"],
-      paint: { "circle-radius": ["case", ["get", "selected"], 19, 13], "circle-color": ["get", "color"], "circle-opacity": ["case", ["get", "selected"], 0.26, 0.14], "circle-blur": 0.86 },
+      paint: { "circle-radius": ["case", ["get", "selected"], 22, 15], "circle-color": ["get", "color"], "circle-opacity": ["case", ["get", "selected"], 0.16, 0.08], "circle-blur": 0.86 },
+    }, "secret-cases");
+  }
+  if (!map.getLayer("secret-case-rings")) {
+    map.addLayer({
+      id: "secret-case-rings", type: "circle", source: "secret-data", filter: ["==", ["get", "kind"], "case"],
+      paint: {
+        "circle-radius": ["case", ["get", "selected"], 17, 11],
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-opacity": 0,
+        "circle-stroke-color": ["get", "color"],
+        "circle-stroke-width": ["case", ["get", "selected"], 2.2, 1.4],
+        "circle-stroke-opacity": ["case", ["get", "selected"], 0.95, 0.72],
+      },
     }, "secret-cases");
   }
   if (!map.getLayer("secret-case-labels")) {
     map.addLayer({
       id: "secret-case-labels", type: "symbol", source: "secret-data", filter: ["==", ["get", "kind"], "case"],
-      layout: { "text-field": ["get", "id"], "text-size": 9, "text-offset": [0, 1.7], "text-anchor": "top", "text-allow-overlap": true },
-      paint: { "text-color": "#dff8ff", "text-halo-color": "#050b14", "text-halo-width": 1.5, "text-opacity": 0.92 },
+      layout: { "text-field": "", "text-size": ["interpolate", ["linear"], ["zoom"], 2, 9, 8, 10.5, 14, 12], "text-offset": [0, 2.15], "text-anchor": "top", "text-allow-overlap": true, "text-letter-spacing": 0.04 },
+      paint: { "text-color": "#f4fbff", "text-halo-color": "#050b14", "text-halo-width": 2, "text-opacity": 0.98 },
     });
   }
   if (!map.getLayer("secret-locations")) {
@@ -276,7 +332,10 @@ function recolorMapStyle(map: MapLibreMap) {
     const sourceLayer = String(layer["source-layer"] ?? "").toLowerCase();
 
     if (layer.type === "background") setPaint(map, layer.id, "background-color", MAP_COLORS.background);
-    if (layer.type === "raster" && id === "natural_earth") setPaint(map, layer.id, "raster-opacity", 0);
+    // Keep the operational map vector-only; provider raster/hillshade layers
+    // can otherwise wash out the dark intelligence palette after globe reloads.
+    if (layer.type === "raster") setPaint(map, layer.id, "raster-opacity", 0);
+    if (layer.type === "hillshade") setPaint(map, layer.id, "hillshade-opacity", 0);
 
     if (layer.type === "fill" && (sourceLayer === "park" || sourceLayer === "landuse" || sourceLayer === "landcover")) {
       const isGrass = id === "landcover_grass";
@@ -373,11 +432,24 @@ function buildData(markers: CaseMarker[], showCases: boolean, showLocations: boo
   const features: GeoJSON.Feature[] = [];
   markers.forEach((marker) => {
     const color = priorityColor(marker.priority);
-    const points = marker.locations.map((location) => [location.longitude, location.latitude]);
-    if (showRoutes && points.length > 1) features.push({ type: "Feature", properties: { kind: "route", color, routeColor: routeColor(marker.priority) }, geometry: { type: "LineString", coordinates: points } });
+    const isSelected = marker.caseId === selectedCaseId;
+    // Keep the map uncluttered: case markers are the entry points, while the
+    // selected case reveals only its own locations and route.
+    const revealDetails = Boolean(selectedCaseId) && isSelected;
     const center = centerOf(marker);
-    if (showCases && center) features.push({ type: "Feature", properties: { kind: "case", id: marker.caseId, color, selected: marker.caseId === selectedCaseId, title: marker.title }, geometry: { type: "Point", coordinates: center } });
-    if (showLocations) marker.locations.forEach((location) => features.push({ type: "Feature", properties: { kind: "location", id: location.id, caseId: marker.caseId, color, selected: location.id === selectedLocationId, name: location.name }, geometry: { type: "Point", coordinates: [location.longitude, location.latitude] } }));
+    if (showCases && center) features.push({ type: "Feature", properties: { kind: "case", id: marker.caseId, color, priority: marker.priority, selected: isSelected, title: marker.title }, geometry: { type: "Point", coordinates: center } });
+    if (showRoutes && revealDetails && center) {
+      marker.locations.forEach((location) => {
+        const point: [number, number] = [location.longitude, location.latitude];
+        if (point[0] === center[0] && point[1] === center[1]) return;
+        features.push({
+          type: "Feature",
+          properties: { kind: "route", color, routeColor: routeColor(marker.priority), from: marker.caseId, to: location.id },
+          geometry: { type: "LineString", coordinates: [center, point] },
+        });
+      });
+    }
+    if (showLocations && revealDetails) marker.locations.forEach((location) => features.push({ type: "Feature", properties: { kind: "location", id: location.id, caseId: marker.caseId, color, selected: location.id === selectedLocationId, name: location.name }, geometry: { type: "Point", coordinates: [location.longitude, location.latitude] } }));
   });
   return featureCollection(features);
 }
@@ -528,10 +600,15 @@ export function InvestigationMap() {
   const selectedLocationId = useMapStore((state) => state.selectedLocationId);
   const cameraRequest = useMapStore((state) => state.cameraRequest);
   const hoveredMarker = useMemo(() => hover && markers.find((marker) => marker.caseId === hover.id), [hover, markers]);
+  const hoveredLocation = useMemo(() => hover && markers.flatMap((marker) => marker.locations).find((location) => location.id === hover.id), [hover, markers]);
+  const hoveredEntities = useMemo(() => hoveredLocation
+    ? hoveredLocation.entityIds.map((id, index) => hoveredLocation.entityNames?.[index] ?? prototypeEntities.find((entity) => entity.id === id)?.name ?? id)
+    : [], [hoveredLocation]);
+  const selectedMarker = useMemo(() => selectedCaseId ? markers.find((marker) => marker.caseId === selectedCaseId) : null, [markers, selectedCaseId]);
 
   useEffect(() => {
     if (!hostRef.current) return;
-    const map = new maplibregl.Map({ container: hostRef.current, style: OPENFREEMAP_STYLE, center: INDIA_CENTER, zoom: 4.8, pitch: 60, bearing: -14, maxPitch: 78, maxZoom: 20, minZoom: 2, attributionControl: true, pitchWithRotate: true, dragRotate: true, canvasContextAttributes: { antialias: true } });
+    const map = new maplibregl.Map({ container: hostRef.current, style: OPENFREEMAP_STYLE, projection: { type: "globe" }, center: INDIA_CENTER, zoom: 3, pitch: 60, bearing: -14, maxPitch: 78, maxZoom: 22, minZoom: 2, attributionControl: true, pitchWithRotate: true, dragRotate: true, canvasContextAttributes: { antialias: true } });
     mapRef.current = map;
     const threeOverlay = createThreeIntelOverlay();
     threeOverlayRef.current = threeOverlay;
@@ -594,11 +671,15 @@ export function InvestigationMap() {
       const ds = map.getSource("secret-data") as maplibregl.GeoJSONSource | undefined;
       ds?.setData(buildData(st.markers, st.showCases, st.showLocations, st.showRoutes, st.selectedCaseId, st.selectedLocationId));
       if (map.getLayer("secret-location-labels")) map.setLayoutProperty("secret-location-labels", "visibility", st.showLabels && st.showLocations ? "visible" : "none");
-      if (map.getLayer("secret-routes")) map.setLayoutProperty("secret-routes", "visibility", st.showRoutes ? "visible" : "none");
+      ["secret-route-glass", "secret-route-frost", "secret-routes"].forEach((layerId) => { if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", st.showRoutes ? "visible" : "none"); });
     };
     map.on("idle", reapplyAfterProjection);
     const applyStyleTheme = () => {
       if (!map.isStyleLoaded()) return;
+      ["secret-global-intel-glow", "secret-global-intel-arcs"].forEach((layerId) => {
+        if (map.getLayer(layerId)) map.removeLayer(layerId);
+      });
+      if (map.getSource("secret-global-intel")) map.removeSource("secret-global-intel");
       // Bend the planet into a 3D globe like Google Earth, with atmospheric
       // fog/glow so the round horizon and space read clearly behind the map.
       const projection = map.getProjection();
@@ -606,14 +687,17 @@ export function InvestigationMap() {
         projectionRecolorPending = true;
         map.setProjection({ type: "globe" });
       }
-      map.setFog({
-        "range": [2, 9],
-        "color": "#0d1838",
-        "high-color": "#102a4a",
-        "horizon-color": "#0b1b35",
-        "space-color": "#050816",
-        "star-intensity": 0.08,
-      });
+      // Older MapLibre builds do not expose fog; keep the globe usable there.
+      if (typeof map.setFog === "function") {
+        map.setFog({
+          "range": [2, 9],
+          "color": "#0d1838",
+          "high-color": "#102a4a",
+          "horizon-color": "#0b1b35",
+          "space-color": "#050816",
+          "star-intensity": 0.08,
+        });
+      }
       addMapLayers(map);
       // Globe projection triggers an async style reload that wipes GeoJSON
       // source data.  Re-inject the current marker set so case/location dots
@@ -622,7 +706,7 @@ export function InvestigationMap() {
       const ds = map.getSource("secret-data") as maplibregl.GeoJSONSource | undefined;
       if (ds) ds.setData(buildData(st.markers, st.showCases, st.showLocations, st.showRoutes, st.selectedCaseId, st.selectedLocationId));
       if (map.getLayer("secret-location-labels")) map.setLayoutProperty("secret-location-labels", "visibility", st.showLabels && st.showLocations ? "visible" : "none");
-      if (map.getLayer("secret-routes")) map.setLayoutProperty("secret-routes", "visibility", st.showRoutes ? "visible" : "none");
+      ["secret-route-glass", "secret-route-frost", "secret-routes"].forEach((layerId) => { if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", st.showRoutes ? "visible" : "none"); });
       recolorMapStyle(map);
       if (!map.getLayer(threeOverlay.id)) map.addLayer(threeOverlay);
       setReady(true);
@@ -643,19 +727,8 @@ export function InvestigationMap() {
       const id = String(feature?.properties?.id ?? "");
       if (!id) return;
       const store = useMapStore.getState();
-      const marker = store.markers.find((item) => item.caseId === id);
-      const location = marker ? primaryLocation(marker) : null;
       store.selectCase(id);
       store.selectEntity(null);
-      if (location) {
-        map.stop();
-        map.jumpTo({
-          center: [location.longitude, location.latitude],
-          zoom: 17,
-          pitch: 66,
-          bearing: map.getBearing() + 18,
-        });
-      }
       setHover(null);
     };
     const onMove = (event: MapMouseEvent) => {
@@ -698,7 +771,7 @@ export function InvestigationMap() {
     const location = markers.flatMap((marker) => marker.locations).find((item) => item.id === selectedLocationId);
     orbitFocusRef.current = location ? [location.longitude, location.latitude] : null;
     const selectedCase = selectedCaseId ? markers.find((marker) => marker.caseId === selectedCaseId) : null;
-    const target = location ? [location.longitude, location.latitude] as [number, number] : selectedCase ? centerOf(selectedCase) : null;
+    const target = location ? [location.longitude, location.latitude] as [number, number] : selectedCase ? centerOf(selectedCase) : INDIA_CENTER;
     threeOverlayRef.current?.setTarget(target);
     mapRef.current?.triggerRepaint();
   }, [markers, selectedCaseId, selectedLocationId]);
@@ -709,7 +782,7 @@ export function InvestigationMap() {
     const source = map.getSource("secret-data") as maplibregl.GeoJSONSource | undefined;
     source?.setData(buildData(markers, showCases, showLocations, showRoutes, selectedCaseId, selectedLocationId));
     if (map.getLayer("secret-location-labels")) map.setLayoutProperty("secret-location-labels", "visibility", showLabels && showLocations ? "visible" : "none");
-    if (map.getLayer("secret-routes")) map.setLayoutProperty("secret-routes", "visibility", showRoutes ? "visible" : "none");
+    ["secret-route-glass", "secret-route-frost", "secret-routes"].forEach((layerId) => { if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", showRoutes ? "visible" : "none"); });
   }, [markers, showCases, showLocations, showRoutes, showLabels, selectedCaseId, selectedLocationId, ready]);
 
   useEffect(() => {
@@ -721,7 +794,7 @@ export function InvestigationMap() {
     stopOrbitRef.current();
     const resumeAfterFlight = () => { if (resumeOrbit && !orbitEnabledRef.current) startOrbitRef.current(); };
     if (resumeOrbit) map.once("moveend", resumeAfterFlight);
-    if (request.kind === "reset") map.easeTo({ center: INDIA_CENTER, zoom: 4.8, pitch: 60, bearing: -14, duration: 1200, essential: true });
+    if (request.kind === "reset") map.easeTo({ center: INDIA_CENTER, zoom: 3, pitch: 60, bearing: -14, duration: 1200, essential: true });
     else if (request.kind === "fit-all") fitAll(map, state.markers);
     else if (request.kind === "fit-point") {
       const zoom = request.zoomDist <= 26 ? 17 : request.zoomDist <= 40 ? 15 : 11.5;
@@ -733,14 +806,17 @@ export function InvestigationMap() {
       const location = state.locationById(request.locationId);
       if (location) {
         const target: [number, number] = [location.longitude, location.latitude];
-        map.flyTo({ center: target, zoom: 17, pitch: 64, bearing: map.getBearing() + 18, duration: 1700, essential: true });
+        map.flyTo({ center: target, zoom: 21.5, pitch: 72, bearing: map.getBearing() + 18, duration: 2200, essential: true });
       }
     } else if (request.kind === "fit-case") {
       const marker = state.markers.find((item) => item.caseId === request.caseId);
       const location = marker ? primaryLocation(marker) : null;
       if (location) {
         const target: [number, number] = [location.longitude, location.latitude];
-        map.flyTo({ center: target, zoom: 17, pitch: 66, bearing: map.getBearing() + 18, duration: 1700, essential: true });
+        // Zoom to the closest useful building-level view, approximately a
+        // 50m operational radius around the selected case location.
+        map.stop();
+        map.flyTo({ center: target, zoom: 22, pitch: 74, bearing: map.getBearing() + 18, duration: 1400, essential: true });
       }
     }
   }, [cameraRequest, ready]);
@@ -750,11 +826,20 @@ export function InvestigationMap() {
       <div ref={hostRef} className="globe-canvas-host maplibre-map-host" />
       <div className="globe-scanlines" />
       <div className="globe-vignette" />
+      {selectedMarker && <div className="map-selected-case" role="status">{selectedMarker.title}</div>}
       {hoveredMarker && hover && <div className="map-tooltip" style={{ left: Math.min(hover.x + 16, window.innerWidth - 270), top: Math.max(8, hover.y - 120) }}>
         <div className="map-tooltip-title">{hoveredMarker.caseId} · {hoveredMarker.title}</div>
         <div className="map-tooltip-row"><span>PRIORITY</span><strong className="map-tooltip-priority">{hoveredMarker.priority}</strong></div>
         <div className="map-tooltip-row"><span>LOCATIONS</span><strong>{hoveredMarker.locations.length}</strong></div>
         <div className="map-tooltip-row"><span>ENTITIES</span><strong>{hoveredMarker.entityIds.length}</strong></div>
+      </div>}
+      {hoveredLocation && hover && <div className="map-tooltip map-profile-tooltip" style={{ left: Math.min(hover.x + 16, window.innerWidth - 290), top: Math.max(8, hover.y - 150) }}>
+        <div className="map-tooltip-kicker">CULPRIT PROFILE</div>
+        <div className="map-tooltip-title">{hoveredEntities[0] ?? "Unidentified lead"}</div>
+        <div className="map-tooltip-row"><span>LOCATION</span><strong>{hoveredLocation.name.split(" · ")[0]}</strong></div>
+        <div className="map-tooltip-row"><span>STATUS</span><strong>{hoveredLocation.name.includes("detained") ? "DETAINED" : hoveredLocation.name.includes("report") ? "VEHICLE LEAD" : "INVESTIGATIVE LEAD"}</strong></div>
+        <div className="map-tooltip-row"><span>LINKED</span><strong>{hoveredEntities.length > 1 ? `${hoveredEntities.length} ENTITIES` : "CASE EVIDENCE"}</strong></div>
+        {hoveredEntities.length > 1 && <div className="map-tooltip-entities">{hoveredEntities.join(" · ")}</div>}
       </div>}
     </div>
   );

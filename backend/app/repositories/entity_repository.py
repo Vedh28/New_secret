@@ -22,6 +22,16 @@ class EntityRepository(BaseRepository[Entity]):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_any_type(self, case_id: int, entity_id: str) -> Entity | None:
+        """Find a canonical entity by its stable external id."""
+        stmt = (
+            select(Entity)
+            .where(Entity.case_id == case_id, Entity.entity_id == entity_id)
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def list_by_case(self, case_id: int) -> list[Entity]:
         stmt = select(Entity).where(Entity.case_id == case_id).order_by(Entity.id)
         result = await self._session.execute(stmt)

@@ -12,9 +12,10 @@ import {
   setAccessToken,
   type GraphResponse,
 } from "../services/api";
-import { mockGraph } from "../data/graphMock";
+import { prototypeGraph } from "../data/prototypeCase";
 
 export type BackendMode = "checking" | "backend" | "mock";
+const EMPTY_GRAPH: GraphResponse = prototypeGraph;
 
 function usableGraph(network: GraphResponse | null | undefined, fallback: GraphResponse): GraphResponse {
   if (!Array.isArray(network?.nodes) || !Array.isArray(network?.edges)) return fallback;
@@ -43,7 +44,7 @@ interface BackendState {
 export const useBackendStore = create<BackendState>((set, get) => ({
   mode: "checking",
   connected: false,
-  graph: mockGraph,
+  graph: EMPTY_GRAPH,
   lastError: null,
 
   isBackend: () => get().mode === "backend",
@@ -51,7 +52,7 @@ export const useBackendStore = create<BackendState>((set, get) => ({
   connect: async () => {
     set({ mode: "checking", lastError: null });
     if (!getAccessToken()) {
-      set({ mode: "mock", connected: false, graph: mockGraph, lastError: "Not authenticated" });
+      set({ mode: "mock", connected: false, graph: EMPTY_GRAPH, lastError: "Not authenticated" });
       return "mock";
     }
     try {
@@ -64,7 +65,7 @@ export const useBackendStore = create<BackendState>((set, get) => ({
       set({
         mode: "mock",
         connected: false,
-        graph: mockGraph,
+        graph: EMPTY_GRAPH,
         lastError: err instanceof Error ? err.message : "Backend unavailable",
       });
       return "mock";

@@ -12,6 +12,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.entity_repository import EntityRepository, RelationshipRepository
 from app.repositories.source_repository import SourceRepository
 
+
+# Prototype geospatial resolver. External geocoding can replace this later;
+# unknown places remain coordinate-less instead of being placed inaccurately.
+_KNOWN_LOCATION_COORDINATES: dict[str, tuple[float, float]] = {
+    "bandra": (19.0607, 72.8362),
+    "mumbai": (19.0760, 72.8777),
+    "mumbai-pune highway": (18.9890, 73.1170),
+    "pune": (18.5204, 73.8567),
+    "budhwar peth": (18.5162, 73.8567),
+    "dharavi": (19.0370, 72.8560),
+    "mansarovar": (26.8560, 75.7640),
+    "jaipur": (26.9124, 75.7873),
+    "delhi": (28.6139, 77.2090),
+    "bengal": (22.5726, 88.3639),
+    "kolkata": (22.5726, 88.3639),
+    "hyderabad": (17.3850, 78.4867),
+}
+
+
+def _resolve_coordinates(name: str) -> tuple[float, float] | None:
+    normalized = name.strip().lower()
+    # Match specific landmarks before broad city names (e.g. highway before Mumbai).
+    for place in sorted(_KNOWN_LOCATION_COORDINATES, key=len, reverse=True):
+        if place in normalized:
+            return _KNOWN_LOCATION_COORDINATES[place]
+    return None
+
 _COMM_REL_TYPES = ("CALLED", "MESSAGED")
 _TX_REL_TYPES = ("TRANSFERRED_TO",)
 
@@ -163,6 +190,13 @@ class CaseAnalyticsService:
 
     async def locations(self, case_id: int) -> dict[str, Any]:
         entities = await self._entities.list_by_case(case_id)
+        relationships = await self._relationships.list_by_case(case_id)
+        entity_names = {e.entity_id: e.name for e in entities}
+        linked_by_location = {
+            r.target_id: r.source_id
+            for r in relationships
+            if r.rel_type == "LOCATED_AT"
+        }
         area_count: Counter[str] = Counter()
         visits: list[dict[str, Any]] = []
         for e in entities:
@@ -171,12 +205,15 @@ class CaseAnalyticsService:
             area = e.name or e.entity_id
             area_count[area] += 1
             attrs = e.attributes or {}
+            coordinates = _resolve_coordinates(area)
             visits.append(
                 {
                     "location": area,
                     "entity_id": e.entity_id,
-                    "latitude": attrs.get("latitude"),
-                    "longitude": attrs.get("longitude"),
+                    "linked_entity_id": linked_by_location.get(e.entity_id),
+                    "linked_entity_name": entity_names.get(linked_by_location.get(e.entity_id, "")),
+                    "latitude": attrs.get("latitude") or (coordinates[0] if coordinates else None),
+                    "longitude": attrs.get("longitude") or (coordinates[1] if coordinates else None),
                     "observations": area_count[area],
                 }
             )
