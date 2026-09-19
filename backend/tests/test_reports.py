@@ -57,11 +57,14 @@ def report_client() -> TestClient:
         async with S() as s:
             yield s
 
+    from app.blockchain.isolated import set_integrity_session_factory
+    set_integrity_session_factory(S)
     app.dependency_overrides[get_db_session] = override_db
     app.dependency_overrides[get_graph_store] = lambda: store
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    set_integrity_session_factory(None)
     asyncio.run(eng.dispose())
 
 

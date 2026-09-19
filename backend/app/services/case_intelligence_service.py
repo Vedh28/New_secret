@@ -68,12 +68,16 @@ class CaseIntelligenceService:
         """
         try:
             from app.blockchain.service import BlockchainIntegrityService
-            await BlockchainIntegrityService(self._session).enqueue_snapshot(
-                case_id=case_id,
-                snapshot_hash=_snapshot_fingerprint(result),
-                engine_version="1.x",
-                actor_id=actor_id,
-            )
+
+            # SAVEPOINT: a failed enqueue must not poison the intelligence
+            # session's transaction — roll back to the savepoint and continue.
+            async with self._session.begin_nested():
+                await BlockchainIntegrityService(self._session).enqueue_snapshot(
+                    case_id=case_id,
+                    snapshot_hash=_snapshot_fingerprint(result),
+                    engine_version="1.x",
+                    actor_id=actor_id,
+                )
         except Exception as exc:  # noqa: BLE001 - integrity layer must never block analytics
             import logging
             logging.getLogger("secret.integrity").warning(

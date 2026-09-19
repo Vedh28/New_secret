@@ -75,6 +75,12 @@ jobs:
           NEO4J_AUTH: neo4j/secret
         ports:
           - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p secret 'RETURN 1;'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 20
+          --health-start-period 30s
     env:
       SECRET_ENV: dev
       NEO4J_URI: bolt://localhost:7687

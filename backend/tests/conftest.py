@@ -58,6 +58,11 @@ def db_client() -> TestClient:
 
     engine, test_session = asyncio.run(_setup())
 
+    # Isolated integrity transactions (best-effort ledger work triggered from
+    # API endpoints) must share THIS SQLite engine, not the production engine.
+    from app.blockchain.isolated import set_integrity_session_factory
+    set_integrity_session_factory(test_session)
+
     async def override_session():
         async with test_session() as session:
             yield session
@@ -70,6 +75,7 @@ def db_client() -> TestClient:
     with TestClient(_app) as test_client:
         yield test_client
     _app.dependency_overrides.clear()
+    set_integrity_session_factory(None)  # restore production default
     asyncio.run(engine.dispose())
 
 

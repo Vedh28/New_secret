@@ -1,4 +1,4 @@
-"""Integrity hardening tests (P0/P1/P2).
+﻿"""Integrity hardening tests (P0/P1/P2).
 
 Covers: ingestion->Merkle events, report PostgreSQL persistence + verification
 across restart, intelligence snapshot idempotency, registered vs verified
@@ -355,6 +355,51 @@ class TestEventPayloadConsistency:
             svc = BlockchainIntegrityService(session)
             result = await svc.verify_intelligence(case_id, "H")
             assert result["status"] == "NOT_REGISTERED"
+
+
+class TestIntegrityIsolation:
+    async def test_intelligence_endpoint_survives_integrity_flush_failure(self, api_ctx, monkeypatch):
+        """Integrity flush failure must NOT break the intelligence response or
+        poison the main session."""
+        from app.blockchain.service import BlockchainIntegrityService
+
+        client, auth, cn = api_ctx["client"], api_ctx["auth"], api_ctx["ca"]
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("ledger unavailable (injected)")
+
+        monkeypatch.setattr(BlockchainIntegrityService, "flush_pending", _boom)
+
+        r1 = client.get(f"/api/v1/cases/{cn}/intelligence", headers=auth)
+        assert r1.status_code == 200
+        assert "network_dna" in r1.json()
+
+        r2 = client.get(f"/api/v1/cases/{cn}/intelligence", headers=auth)
+        assert r2.status_code == 200
+        assert "network_dna" in r2.json()
+
+    async def test_decision_endpoint_survives_integrity_failure(self, api_ctx, monkeypatch):
+        """Decision business transaction must commit even when integrity is down."""
+        from app.blockchain.service import BlockchainIntegrityService
+
+        client, auth, cn = api_ctx["client"], api_ctx["auth"], api_ctx["ca"]
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("ledger unavailable (injected)")
+
+        monkeypatch.setattr(BlockchainIntegrityService, "record_analyst_decision", _boom)
+
+        r = client.post(
+            f"/api/v1/cases/{cn}/potential-links/decision",
+            json={"source": "P-9001", "target": "P-9002", "decision": "DEFER"},
+            headers=auth,
+        )
+        assert r.status_code == 200
+        assert r.json()["new_status"] == "DEFERRED"
+
+        decisions = client.get(f"/api/v1/cases/{cn}/potential-links/decisions", headers=auth)
+        assert decisions.status_code == 200
+        assert any(d["new_status"] == "DEFERRED" for d in decisions.json())
 
 
 # ---------------------------------------------------------------------------

@@ -43,28 +43,34 @@ async def upload_source(
     content = await file.read()
     result = await SourceService(session).upload(case_key, source_type, file.filename, content, source_id)
     case_id = await _resolve_case_id(session, case_key)
-    integrity_status = await _register_evidence_integrity(session, case_id, file.filename,
-                                                          source_type, result.source_id,
-                                                          result.evidence_hash or "", user.id)
     await _audit(session, user, "source_uploaded", result.source_id, {
         "case_key": case_key, "filename": file.filename, "format": result.format,
-        "evidence_hash": result.evidence_hash, "integrity_status": integrity_status,
+        "evidence_hash": result.evidence_hash,
     })
+    # Commit the AUTHORITATIVE upload transaction BEFORE best-effort integrity,
+    # so any integrity failure can never poison the source's transaction.
     await session.commit()
+
+    integrity_status = await _register_evidence_integrity_isolated(
+        case_id, file.filename, source_type, result.source_id,
+        result.evidence_hash or "", user.id)
     result.integrity_status = integrity_status
     return result
 
 
-async def _register_evidence_integrity(session, case_id: int, filename: str, source_type: str,
-                                       source_id: str, evidence_hash: str, actor_id: int) -> str:
-    """Compute + register the source's integrity fingerprint; returns status."""
-    from app.blockchain.hashes import canonical_evidence_payload, hash_evidence_payload
-    from app.blockchain.service import BlockchainIntegrityService
-    from app.repositories.source_repository import SourceRepository
+async def _register_evidence_integrity_isolated(case_id: int, filename: str, source_type: str,
+                                                source_id: str, evidence_hash: str,
+                                                actor_id: int) -> str:
+    """Register the source's integrity fingerprint in its OWN transaction."""
+    from app.blockchain.isolated import run_integrity_isolated
 
-    try:
-        source = await SourceRepository(session).list_by_case(case_id)
-        row = next((s for s in source if s.source_id == source_id), None)
+    async def _builder(session):
+        from app.blockchain.hashes import canonical_evidence_payload, hash_evidence_payload
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.source_repository import SourceRepository
+
+        row = next((s for s in await SourceRepository(session).list_by_case(case_id)
+                    if s.source_id == source_id), None)
         meta = row.metadata_json or {} if row else {}
         records = [r for r in (meta.get("records") or []) if isinstance(r, dict)]
         content_hash = hash_evidence_payload(canonical_evidence_payload(
@@ -77,9 +83,13 @@ async def _register_evidence_integrity(session, case_id: int, filename: str, sou
             actor_id=actor_id,
         )
         return registered.get("status", "REGISTERED")
-    except Exception as exc:  # noqa: BLE001 - ledger outage must not break upload
-        logger.warning("evidence registration failed case=%s source=%s: %s", case_id, source_id, exc)
+
+    ok, status, error = await run_integrity_isolated(_builder)
+    if not ok:
+        logger.warning("evidence registration failed case=%s source=%s type=%s",
+                       case_id, source_id, type(error).__name__ if error else "unknown")
         return "LEDGER_UNAVAILABLE"
+    return status or "LEDGER_UNAVAILABLE"
 
 
 @router.post(
@@ -152,43 +162,18 @@ async def process_source(
         "graph_edges": graph_summary["edges"],
         "extraction_provider": result["metrics"].get("extraction_provider", "deterministic"),
     })
-    # Register processed records as a batched integrity event (Merkle root).
-    try:
-        from app.blockchain.service import BlockchainIntegrityService
-        from app.repositories.source_repository import SourceRepository
-        rows = await SourceRepository(session).list_by_case(case_id)
-        source_row = next((s for s in rows if s.source_id == source_id), None)
-        records = [r for r in (source_row.metadata_json or {}).get("records", []) if isinstance(r, dict)]
-        batch = await BlockchainIntegrityService(session).register_processed_batch(
-            case_id=case_id, source_id=source_id, source_type=source_row.source_type or "OTHER",
-            records=records, actor_id=user.id,
-            extraction={"entities": result["metrics"].get("entities_persisted", 0),
-                        "relationships": result["metrics"].get("relationships_persisted", 0)},
-        )
-        # Reflect the ledger commitment on the processed source's provenance so
-        # record-level drilldown can show its batch transaction + block.
-        if source_row is not None and batch.get("transaction_id"):
-            provenance = source_row.metadata_json.get("provenance") or []
-            for item in provenance:
-                item["transaction_id"] = batch["transaction_id"]
-                item["block_index"] = batch["block_index"]
-            source_row.metadata_json = {
-                **source_row.metadata_json,
-                "provenance": provenance,
-                "integrity_tx": batch["transaction_id"],
-                "integrity_block": batch["block_index"],
-                "merkle_root": batch.get("merkle_root"),
-            }
-            await SourceRepository(session).save(source_row)
-        integrity_status = "REGISTERED" if batch.get("transaction_id") else (
-            "PENDING" if batch.get("merkle_root") is not None else "LEDGER_UNAVAILABLE"
-        )
-    except Exception as exc:  # noqa: BLE001 - ledger outage must not break processing
-        logger.warning("processed-batch registration failed case=%s source=%s: %s -> %s",
-                       case_id, source_id, type(exc).__name__, exc)
-        batch = {"merkle_root": None}
-        integrity_status = "LEDGER_UNAVAILABLE"
+    # Commit the AUTHORITATIVE processing transaction (parsed + persisted +
+    # graph materialized). Integrity batching runs AFTER, in its own session/DB
+    # transaction, so a ledger failure can never poison processing results.
     await session.commit()
+
+    batch, batch_ok = await _register_batch_isolated(case_id, source_id, result["metrics"], user.id)
+    integrity_status = "REGISTERED" if batch.get("transaction_id") else (
+        "PENDING" if batch.get("merkle_root") is not None else "LEDGER_UNAVAILABLE"
+    )
+    if batch.get("transaction_id"):
+        await _enrich_provenance_isolated(case_id, source_id, batch)
+
     metrics = {
         **result["metrics"],
         "graph_refreshed": True,
@@ -200,6 +185,64 @@ async def process_source(
         "integrity_status": integrity_status,
     }
     return SourceProcessResult(**{**result, "metrics": metrics})
+
+
+async def _register_batch_isolated(case_id: int, source_id: str, metrics: dict,
+                                   actor_id: int) -> tuple[dict, bool]:
+    """Register processed records as a batched Merkle integrity event in its
+    own transaction (reads the committed source row from its own session)."""
+    from app.blockchain.isolated import run_integrity_isolated
+
+    async def _builder(session):
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.source_repository import SourceRepository
+
+        row = next((s for s in await SourceRepository(session).list_by_case(case_id)
+                    if s.source_id == source_id), None)
+        records = [r for r in (row.metadata_json or {}).get("records", []) if isinstance(r, dict)] if row else []
+        return await BlockchainIntegrityService(session).register_processed_batch(
+            case_id=case_id, source_id=source_id, source_type=(row.source_type if row else "OTHER"),
+            records=records, actor_id=actor_id,
+            extraction={"entities": metrics.get("entities_persisted", 0),
+                        "relationships": metrics.get("relationships_persisted", 0)},
+        )
+
+    ok, batch, error = await run_integrity_isolated(_builder)
+    if not ok:
+        logger.warning("processed-batch registration failed case=%s source=%s type=%s",
+                       case_id, source_id, type(error).__name__ if error else "unknown")
+        return {}, False
+    return batch or {}, True
+
+
+async def _enrich_provenance_isolated(case_id: int, source_id: str, batch: dict) -> None:
+    """Best-effort: stamp the ledger tx/block onto committed source provenance."""
+    from app.blockchain.isolated import run_integrity_isolated
+
+    async def _builder(session):
+        from app.repositories.source_repository import SourceRepository
+
+        rows = await SourceRepository(session).list_by_case(case_id)
+        row = next((s for s in rows if s.source_id == source_id), None)
+        if row is None:
+            return
+        provenance = row.metadata_json.get("provenance") or []
+        for item in provenance:
+            item["transaction_id"] = batch["transaction_id"]
+            item["block_index"] = batch["block_index"]
+        row.metadata_json = {
+            **row.metadata_json,
+            "provenance": provenance,
+            "integrity_tx": batch["transaction_id"],
+            "integrity_block": batch["block_index"],
+            "merkle_root": batch.get("merkle_root"),
+        }
+        await SourceRepository(session).save(row)
+
+    ok, _r, error = await run_integrity_isolated(_builder)
+    if not ok:
+        logger.warning("provenance enrichment failed case=%s source=%s type=%s",
+                       case_id, source_id, type(error).__name__ if error else "unknown")
 
 
 @router.delete(

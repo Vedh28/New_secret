@@ -44,32 +44,40 @@ async def generate_report(
 ) -> ReportResponse:
     report = await ReportService(session, store, user).generate(payload)
     case_id = (await _resolve_case_id(session, payload.case_number)) if payload.case_number else None
-    integrity = None
-    if case_id is not None:
-        current_hash = hash_report_payload(report_integrity_payload(
-            report_id=report.id, report_type=report.report_type, title=report.title,
-            sections=[{"heading": s.heading, "body": s.body} for s in report.sections],
-            generated_at=str(report.generated_at),
-        ))
-        try:
-            from app.blockchain.service import BlockchainIntegrityService
-            integrity = await BlockchainIntegrityService(session).register_report(
-                case_id=case_id, report=report, actor_id=user.id, report_hash=current_hash,
-            )
-        except Exception:  # noqa: BLE001 - integrity failure must not break reporting
-            integrity = None
     try:
         from app.services.audit_service import AuditService
         await AuditService(session).record(
             user, "report_generated", object_type="report", object_id=report.id,
             result={"report_type": report.report_type,
-                    "case_number": payload.case_number or "",
-                    "integrity_tx": (integrity or {}).get("transaction_id") or "",
-                    "report_hash": (integrity or {}).get("report_hash") or current_hash if case_id else ""},
+                    "case_number": payload.case_number or ""},
         )
-        await session.commit()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - audit is best-effort
         pass
+    # Commit the AUTHORITATIVE report transaction first; integrity registration
+    # runs afterwards in its own transaction so a ledger failure can never
+    # poison the persisted report.
+    await session.commit()
+
+    if case_id is not None:
+        from app.blockchain.isolated import run_integrity_isolated
+
+        async def _register(session2):
+            from app.blockchain.service import BlockchainIntegrityService
+            current_hash = hash_report_payload(report_integrity_payload(
+                report_id=report.id, report_type=report.report_type, title=report.title,
+                sections=[{"heading": s.heading, "body": s.body} for s in report.sections],
+                generated_at=str(report.generated_at),
+            ))
+            return await BlockchainIntegrityService(session2).register_report(
+                case_id=case_id, report=report, actor_id=user.id, report_hash=current_hash,
+            )
+
+        ok, _r, error = await run_integrity_isolated(_register)
+        if not ok:
+            import logging
+            logging.getLogger("secret.integrity").warning(
+                "report integrity registration failed report=%s case=%s type=%s",
+                report.id, case_id, type(error).__name__ if error else "unknown")
     return report
 
 

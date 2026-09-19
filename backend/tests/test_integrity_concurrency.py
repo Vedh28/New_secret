@@ -818,6 +818,36 @@ class TestEndToEndLifecycle:
             assert (await svc.case_summary(case_b))["chain_status"] == "UNAVAILABLE"
 
 
+class TestLinkDecisionConcurrency:
+    async def test_concurrent_decision_upsert_single_row(self, concurrency_ctx):
+        """Concurrent repository upserts for the same pair collapse to one row."""
+        from app.repositories.link_decision_repository import LinkDecisionRepository
+
+        maker = concurrency_ctx["maker"]
+        case_id = int(concurrency_ctx["case_a"])
+
+        async def _upsert(session):
+            repo = LinkDecisionRepository(session)
+            row = await repo.upsert_pair(
+                case_id=case_id, entity_a="P-100", entity_b="P-200",
+                new_status="ANALYST_CONFIRMED", decision="CONFIRM",
+                analyst_id=None, evidence_ids=["E1"], notes="same",
+            )
+            await session.commit()
+            return row
+
+        async with maker() as sa:
+            async with maker() as sb:
+                await asyncio.gather(_upsert(sa), _upsert(sb))
+
+        async with maker() as session:
+            rows = await LinkDecisionRepository(session).list_by_case(case_id)
+            assert len(rows) == 1  # exactly one authoritative row
+            assert rows[0].entity_a == "P-100" and rows[0].entity_b == "P-200"
+            assert rows[0].new_status == "ANALYST_CONFIRMED"
+            assert rows[0].decision == "CONFIRM"
+
+
 def _chain_block(row) -> object:
     from app.blockchain.interface import Block
 

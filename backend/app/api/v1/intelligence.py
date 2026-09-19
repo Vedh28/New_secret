@@ -6,6 +6,8 @@ support, never a guilt finding.
 """
 from __future__ import annotations
 
+import logging
+
 import networkx as nx
 from fastapi import APIRouter, HTTPException, status
 
@@ -14,9 +16,24 @@ from app.repositories.case_repository import CaseRepository
 from app.schemas.link_decision import LinkDecisionCreate, LinkDecisionRead
 from app.services.audit_service import AuditService
 from app.services.case_intelligence_service import CaseIntelligenceService
+from app.blockchain.service import BlockchainIntegrityService
 from app.intelligence import simulate
 from app.repositories.link_decision_repository import LinkDecisionRepository
 from app.models.link_decision import LINK_STATUSES
+
+logger = logging.getLogger("secret.integrity")
+
+
+async def _integrity_isolated(case_id, operation: str, builder):
+    """Run a best-effort integrity op in its OWN transaction (never the
+    caller's), commit it there, and surface failures as logged UNAVAILABLE —
+    the business transaction is unaffected."""
+    from app.blockchain.isolated import run_integrity_isolated
+    ok, result, error = await run_integrity_isolated(builder)
+    if not ok:
+        logger.warning("integrity %s failed case=%s type=%s", operation, case_id,
+                       type(error).__name__ if error else "unknown")
+    return ok, result
 
 router = APIRouter()
 
@@ -56,15 +73,13 @@ async def get_intelligence(case_key: str, session: DbSession, _user: CurrentUser
     case_id = await _resolve_case_id(session, case_key)
     result = await CaseIntelligenceService(session).build(case_id, cache=_cache)
     # A freshly computed snapshot enqueues an idempotent INTEGRITY SNAPSHOT
-    # outbox event; flush it so the ledger confirms it (a cache hit re-enqueues
-    # nothing, so repeated reads cannot duplicate snapshots).
-    try:
-        from app.blockchain.service import BlockchainIntegrityService
-        svc = BlockchainIntegrityService(session)
-        await svc.flush_pending(case_id)
-    except Exception:  # noqa: BLE001 - integrity must never break intelligence reads
-        pass
+    # outbox row (savepoint-contained; a cache hit enqueues nothing).
+    # Commit the AUTHORITATIVE intelligence transaction FIRST, then flush the
+    # ledger in a SEPARATE transaction so an integrity failure can never poison
+    # the session that just produced the intelligence result.
     await session.commit()
+    await _integrity_isolated(case_id, "intelligence_build_flush",
+                              lambda s: BlockchainIntegrityService(s).flush_pending(case_id))
     return result
 
 
@@ -152,30 +167,16 @@ async def record_decision(
     case_id = await _resolve_case_id(session, case_key)
     repo = LinkDecisionRepository(session)
     a, b = sorted([payload.source, payload.target])
-    existing = await repo.get_pair(case_id, a, b)
-    previous = existing.new_status if existing else "POTENTIAL"
     new_status = _DECISION_TO_STATUS[payload.decision]
 
-    if existing is None:
-        decision = await repo.create(
-            case_id=case_id,
-            entity_a=a,
-            entity_b=b,
-            previous_status=previous,
-            new_status=new_status,
-            decision=payload.decision,
-            analyst_id=user.id,
-            evidence_ids=payload.evidence_ids,
-            notes=payload.notes,
-        )
-    else:
-        existing.previous_status = previous
-        existing.new_status = new_status
-        existing.decision = payload.decision
-        existing.analyst_id = user.id
-        existing.evidence_ids = payload.evidence_ids
-        existing.notes = payload.notes
-        decision = await repo.save(existing)
+    # Database-atomic upsert keyed by UNIQUE(case_id, entity_a, entity_b):
+    # concurrent requests collapse onto ONE row; previous_status advances from
+    # the existing row's new_status (latest successful write wins).
+    decision = await repo.upsert_pair(
+        case_id=case_id, entity_a=a, entity_b=b,
+        new_status=new_status, decision=payload.decision,
+        analyst_id=user.id, evidence_ids=payload.evidence_ids, notes=payload.notes,
+    )
 
     await AuditService(session).record(
         user=user,
@@ -184,23 +185,20 @@ async def record_decision(
         object_id=f"{a}<->{b}",
         result={
             "case_id": case_id,
-            "previous_status": previous,
-            "new_status": new_status,
+            "previous_status": decision.previous_status,
+            "new_status": decision.new_status,
             "evidence_ids": payload.evidence_ids,
         },
     )
-    # Register the analyst decision as a blockchain integrity event (best-effort).
-    try:
-        from app.blockchain.service import BlockchainIntegrityService
-        await BlockchainIntegrityService(session).record_analyst_decision(
-            case_id=case_id, entity_a=a, entity_b=b, decision=payload.decision,
-            evidence_ids=payload.evidence_ids, notes=payload.notes, actor_id=user.id,
-        )
-    except Exception:  # noqa: BLE001 - integrity failure must not break the decision
-        pass
     invalidate_case_cache(case_id)
+    # Commit the AUTHORITATIVE decision + audit transaction before the
+    # best-effort integrity commitment (which runs in its own transaction).
     await session.commit()
     await session.refresh(decision)
+    await _integrity_isolated(case_id, "analyst_decision",
+                              lambda s: BlockchainIntegrityService(s).record_analyst_decision(
+                                  case_id=case_id, entity_a=a, entity_b=b, decision=payload.decision,
+                                  evidence_ids=payload.evidence_ids, notes=payload.notes, actor_id=user.id))
     return _decision_read(decision)
 
 
