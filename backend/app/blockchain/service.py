@@ -271,63 +271,104 @@ class BlockchainIntegrityService:
         Enqueues EVIDENCE_PROCESSED, RECORD_BATCH_REGISTERED,
         ENTITY_EXTRACTED and RELATIONSHIP_DERIVED as ONE batch and flushes them
         into a single chained block during the same processing operation.
+
+        IDEMPOTENCY: every event carries a deterministic dedupe_key derived from
+        its CONTENT (merkle root / counts). Iterating the same source a second
+        time re-emits the same commitments — the dedupe unique index collapses
+        them onto the existing outbox rows, so a reprocess NEVER duplicates
+        ledger events, Merkle commitments or blocks. Reprocessing with CHANGED
+        records produces a new root -> explicit new commitment (version
+        semantics by content).
         """
         case_id = _normalize_case(case_id)
         record_hashes = [hashes.hash_canonical_record(record) for record in records]
         batch = merkle.batch_integrity(record_hashes) if record_hashes else None
 
         extraction = extraction or {}
+        root = batch["merkle_root"] if batch else None
         processed = {
             "event_type": "EVIDENCE_PROCESSED",
             "case_id": str(case_id),
             "source_id": str(source_id),
             "source_type": str(source_type or ""),
             "record_count": len(records),
-            "merkle_root": batch["merkle_root"] if batch else None,
+            "merkle_root": root,
             "batch_algorithm": "MERKLE-SHA256" if batch else None,
             "entities_extracted": extraction.get("entities", 0),
             "relationships_extracted": extraction.get("relationships", 0),
             "actor_id": str(actor_id or ""),
         }
-        await self.enqueue(case_id=case_id, event_type="EVIDENCE_PROCESSED",
-                           entity_type="source", entity_id=source_id,
-                           payload=processed, actor_id=actor_id)
-
+        events = [(
+            "EVIDENCE_PROCESSED", payload := dict(processed),
+            f"{case_id}::EVIDENCE_PROCESSED::{source_id}::{root or 'none'}",
+        )]
         if batch:
-            await self.enqueue(case_id=case_id, event_type="RECORD_BATCH_REGISTERED",
-                               entity_type="source", entity_id=source_id,
-                               payload={
-                                   "event_type": "RECORD_BATCH_REGISTERED",
-                                   "case_id": str(case_id),
-                                   "source_id": str(source_id),
-                                   "record_count": len(records),
-                                   "merkle_root": batch["merkle_root"],
-                                   "batch_algorithm": "MERKLE-SHA256",
-                                   "actor_id": str(actor_id or ""),
-                               }, actor_id=actor_id)
+            rec_batch = {
+                "event_type": "RECORD_BATCH_REGISTERED",
+                "case_id": str(case_id),
+                "source_id": str(source_id),
+                "record_count": len(records),
+                "merkle_root": root,
+                "batch_algorithm": "MERKLE-SHA256",
+                "actor_id": str(actor_id or ""),
+            }
+            events.append((
+                "RECORD_BATCH_REGISTERED", rec_batch,
+                f"{case_id}::RECORD_BATCH_REGISTERED::{source_id}::{root}",
+            ))
 
-        for event_type, count_field, count in (
+        for event_type, key, count in (
             ("ENTITY_EXTRACTED", "entities", extraction.get("entities", 0)),
             ("RELATIONSHIP_DERIVED", "relationships", extraction.get("relationships", 0)),
         ):
-            await self.enqueue(case_id=case_id, event_type=event_type,
-                               entity_type="source", entity_id=source_id,
-                               payload={
-                                   "event_type": event_type,
-                                   "case_id": str(case_id),
-                                   "source_id": str(source_id),
-                                   "count": int(count or 0),
-                                   "actor_id": str(actor_id or ""),
-                               }, actor_id=actor_id)
+            count = int(count or 0)
+            events.append((
+                event_type,
+                {
+                    "event_type": event_type,
+                    "case_id": str(case_id),
+                    "source_id": str(source_id),
+                    "count": count,
+                    "actor_id": str(actor_id or ""),
+                },
+                f"{case_id}::{event_type}::{source_id}::{count}",
+            ))
 
-        # ONE flush -> one chained block carrying all four events.
-        confirmed = await self.flush_pending(case_id)
-        primary = confirmed[0] if confirmed else {}
+        work_pending = False
+        transaction_id = None
+        for event_type, payload, dedupe_key in events:
+            dedupe = await self._dedupe_outbox(
+                case_id=case_id, dedupe_key=dedupe_key, event_type=event_type,
+                entity_type="source", entity_id=source_id, payload=payload, actor_id=actor_id,
+            )
+            if dedupe["state"] in ("created", "retried", "reused_pending"):
+                work_pending = True
+            if dedupe.get("transaction_id"):
+                transaction_id = dedupe["transaction_id"]
+
+        block_index = None
+        duplicate = not work_pending
+        if work_pending:
+            # ONE flush -> one chained block carrying all pending events.
+            confirmed = await self.flush_pending(case_id)
+            if confirmed:
+                transaction_id = confirmed[0].get("transaction_id") or transaction_id
+                block_index = confirmed[0].get("block_index")
+        else:
+            # All identities already confirmed: find the EVIDENCE_PROCESSED tx.
+            confirmed_tx = await self._find_event(
+                case_id, "EVIDENCE_PROCESSED", source_id,
+                hash_json(processed),
+            )
+            if confirmed_tx:
+                transaction_id = confirmed_tx.get("transaction_id") or transaction_id
+                block_index = confirmed_tx.get("block_index")
         return {
             **processed,
-            "merkle_root": batch["merkle_root"] if batch else None,
-            "transaction_id": primary.get("transaction_id"),
-            "block_index": primary.get("block_index"),
+            "merkle_root": root,
+            "transaction_id": transaction_id,
+            "block_index": block_index,
+            "duplicate": duplicate,
         }
 
     # ------------------------------------------------------------------

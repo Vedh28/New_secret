@@ -81,3 +81,29 @@ async def test_get_relationships() -> None:
     rels = await service.get_relationships("P-0421")
     types = {e.type for e in rels}
     assert types == {"MEMBER_OF", "OWNS"}
+
+class TestCypherLabelSanitizer:
+    """Data-driven node/edge types are interpolated into Cypher; anything that
+    is not a bare [A-Za-z0-9_] token must fall back to a safe default."""
+
+    @pytest.fixture()
+    def safe(self):
+        from app.graph.neo4j_store import _safe_label
+        return _safe_label
+
+    def test_normal_labels_pass_through(self, safe):
+        assert safe("PERSON", "Entity") == "PERSON"
+        assert safe("CDR_X1", "Entity") == "CDR_X1"
+        assert safe("MEMBER_OF", "Entity") == "MEMBER_OF"
+
+    def test_injection_tokens_fall_back(self, safe):
+        for attack in (") MERGE (n:EVIL {id:'x'}) //", "P)(n)-[:R]->", "A; MATCH (x)",
+                       "`PERSON`", "PERSON:TOO", "PERSON}):X", "hei`ght", "plain space"):
+            assert safe(attack, "Entity") == "Entity"
+
+    def test_empty_and_weird_types_fall_back(self, safe):
+        assert safe(None, "Entity") == "Entity"
+        assert safe("", "Entity") == "Entity"
+        assert safe("123", "Entity") == "Entity"  # must start with a letter
+        assert safe({}, "Entity") == "Entity"
+        assert safe(42, "Entity") == "Entity"

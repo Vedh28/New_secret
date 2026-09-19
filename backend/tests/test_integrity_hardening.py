@@ -357,6 +357,111 @@ class TestEventPayloadConsistency:
             assert result["status"] == "NOT_REGISTERED"
 
 
+class TestProcessedBatchIdempotency:
+    """Registering the SAME processed batch twice must never duplicate ledger
+    events / Merkle commitments / blocks. Content changes -> new commitment."""
+
+    RECORDS_A = [
+        {"id": "1", "source_type": "CDR", "timestamp": "2026-09-01T10:00",
+         "fields": {"caller": "N-1", "receiver": "N-2"}},
+        {"id": "2", "source_type": "CDR", "timestamp": "2026-09-01T11:00",
+         "fields": {"caller": "N-2", "receiver": "N-3"}},
+    ]
+    RECORDS_B = [
+        {"id": "1", "source_type": "CDR", "timestamp": "2026-09-01T10:00",
+         "fields": {"caller": "N-1", "receiver": "N-9"}},
+        {"id": "2", "source_type": "CDR", "timestamp": "2026-09-01T11:00",
+         "fields": {"caller": "N-2", "receiver": "N-3"}},
+    ]
+
+    async def _event_counts(self, ctx, case_id: str) -> dict:
+        from app.blockchain.service import BlockchainIntegrityService
+        async with ctx["S"]() as session:
+            events = await BlockchainIntegrityService(session).get_events(case_id)
+        counts: dict[str, int] = {}
+        for e in events:
+            counts[e["event_type"]] = counts.get(e["event_type"], 0) + 1
+        return counts
+
+    async def test_identical_reprocess_no_duplicate_events(self, svc_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.integrity_repository import LedgerBlockRepository
+
+        S, case_id = svc_ctx["S"], svc_ctx["case_id"]
+        async with S() as session:
+            svc = BlockchainIntegrityService(session)
+            first = await svc.register_processed_batch(
+                case_id=case_id, source_id="SRC-1", source_type="CDR",
+                records=self.RECORDS_A, actor_id=None,
+                extraction={"entities": 3, "relationships": 2})
+            await session.commit()
+            assert first["duplicate"] is False
+            assert first["transaction_id"]
+
+            second = await svc.register_processed_batch(
+                case_id=case_id, source_id="SRC-1", source_type="CDR",
+                records=self.RECORDS_A, actor_id=None,
+                extraction={"entities": 3, "relationships": 2})
+            await session.commit()
+            assert second["duplicate"] is True  # same content -> same commitment
+
+        counts = await self._event_counts(svc_ctx, case_id)
+        assert counts.get("EVIDENCE_PROCESSED") == 1
+        assert counts.get("RECORD_BATCH_REGISTERED") == 1
+        assert counts.get("ENTITY_EXTRACTED") == 1
+        assert counts.get("RELATIONSHIP_DERIVED") == 1
+
+        async with S() as session:
+            blocks = await LedgerBlockRepository(session).chain(case_id)
+            assert len(blocks) == 1  # one block total, no re-commitment
+
+    async def test_changed_records_create_new_commitment(self, svc_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.integrity_repository import LedgerBlockRepository
+
+        S, case_id = svc_ctx["S"], svc_ctx["case_id"]
+        async with S() as session:
+            svc = BlockchainIntegrityService(session)
+            first = await svc.register_processed_batch(
+                case_id=case_id, source_id="SRC-1", source_type="CDR",
+                records=self.RECORDS_A, actor_id=None,
+                extraction={"entities": 3, "relationships": 2})
+            await session.commit()
+            changed = await svc.register_processed_batch(
+                case_id=case_id, source_id="SRC-1", source_type="CDR",
+                records=self.RECORDS_B, actor_id=None,
+                extraction={"entities": 3, "relationships": 2})
+            await session.commit()
+            assert changed["duplicate"] is False  # content differs -> explicit new commitment
+
+        counts = await self._event_counts(svc_ctx, case_id)
+        assert counts.get("EVIDENCE_PROCESSED") == 2
+        assert counts.get("RECORD_BATCH_REGISTERED") == 2
+        async with S() as session:
+            blocks = await LedgerBlockRepository(session).chain(case_id)
+            assert len(blocks) == 2
+
+    async def test_reprocess_after_confirm_is_same_transaction(self, svc_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+
+        S, case_id = svc_ctx["S"], svc_ctx["case_id"]
+        async with S() as session:
+            svc = BlockchainIntegrityService(session)
+            first = await svc.register_processed_batch(
+                case_id=case_id, source_id="SRC-1", source_type="CDR",
+                records=self.RECORDS_A, actor_id=None,
+                extraction={"entities": 3, "relationships": 2})
+            await session.commit()
+            tx = first["transaction_id"]
+            again = await svc.register_processed_batch(
+                case_id=case_id, source_id="SRC-1", source_type="CDR",
+                records=self.RECORDS_A, actor_id=None,
+                extraction={"entities": 3, "relationships": 2})
+            await session.commit()
+            # The reprocess reuses the EXISTING commitment identity.
+            assert again["transaction_id"] == tx
+
+
 class TestIntegrityIsolation:
     async def test_intelligence_endpoint_survives_integrity_flush_failure(self, api_ctx, monkeypatch):
         """Integrity flush failure must NOT break the intelligence response or
@@ -452,6 +557,67 @@ class TestIntegrityIsolation:
         assert got.json()["id"] == report_id
 
 
+class TestSourceProcessingSurvival:
+    async def test_source_processing_survives_integrity_failure(self, api_ctx, monkeypatch):
+        """Processed source + authoritative entities survive processed-batch
+        integrity failure (business commits, integrity reports UNAVAILABLE)."""
+        from app.blockchain.service import BlockchainIntegrityService
+
+        client, auth, cn = api_ctx["client"], api_ctx["auth"], api_ctx["ca"]
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("ledger unavailable (injected)")
+
+        monkeypatch.setattr(BlockchainIntegrityService, "register_processed_batch", _boom)
+
+        up = client.post(
+            f"/api/v1/cases/{cn}/sources/upload",
+            headers=auth,
+            files={"file": ("cdr.csv", b"caller,receiver,time\nN-1,N-2,2026-09-01T10:00\nN-2,N-3,2026-09-01T11:00\n", "text/csv")},
+            data={"source_type": "CDR"},
+        )
+        assert up.status_code == 201, up.text
+        sid = up.json()["source_id"]
+
+        pro = client.post(f"/api/v1/cases/{cn}/sources/{sid}/process", headers=auth)
+        assert pro.status_code == 200, pro.text
+        body = pro.json()
+        assert body["status"] == "PROCESSED"
+        assert body["metrics"]["integrity_status"] == "LEDGER_UNAVAILABLE"
+        assert body["metrics"]["entities_persisted"] > 0  # authoritative data persisted
+
+        # Authoritative entities survived via a fresh request.
+        ents = client.get(f"/api/v1/cases/{cn}/entities", headers=auth)
+        assert ents.status_code == 200
+        assert len(ents.json()) == body["metrics"]["entities_persisted"]
+
+    async def test_source_processing_survives_provenance_failure(self, api_ctx, monkeypatch):
+        """Batch registers, but a provenance-stamp failure must not break a
+        successful source processing response."""
+        from app.api.v1 import sources as sources_mod
+
+        client, auth, cn = api_ctx["client"], api_ctx["auth"], api_ctx["ca"]
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("provenance merge failed (injected)")
+
+        monkeypatch.setattr(sources_mod, "_provenance_merge_expression", _boom)
+
+        up = client.post(
+            f"/api/v1/cases/{cn}/sources/upload",
+            headers=auth,
+            files={"file": ("cdr.csv", b"caller,receiver\nN-7,N-8\n", "text/csv")},
+            data={"source_type": "CDR"},
+        )
+        assert up.status_code == 201, up.text
+        sid = up.json()["source_id"]
+
+        pro = client.post(f"/api/v1/cases/{cn}/sources/{sid}/process", headers=auth)
+        assert pro.status_code == 200, pro.text
+        assert pro.json()["metrics"]["integrity_tx"]  # batch itself registered
+        assert pro.json()["status"] == "PROCESSED"
+
+
 # ---------------------------------------------------------------------------
 # Cache consistency (per-process, ephemeral)
 # ---------------------------------------------------------------------------
@@ -467,6 +633,64 @@ class TestCaseCacheInvalidation:
         intel_mod.invalidate_case_cache(999)  # no error for unknown case
         intel_mod.clear_cache()
         assert intel_mod._cache == {}
+
+
+class TestCaseCacheInvalidationApi:
+    def test_upload_and_register_invalidate_case_cache(self, api_ctx):
+        """Source upload/register must drop stale intelligence immediately."""
+        from app.api.v1 import intelligence as intel_mod
+
+        client, auth, cn = api_ctx["client"], api_ctx["auth"], api_ctx["ca"]
+
+        # Warm the cache.
+        r = client.get(f"/api/v1/cases/{cn}/intelligence", headers=auth)
+        assert r.status_code == 200
+        case_id = r.json()["case_id"]
+        assert case_id in intel_mod._cache
+
+        # Uploading a source invalidates that case's cached intelligence.
+        up = client.post(
+            f"/api/v1/cases/{cn}/sources/upload",
+            headers=auth,
+            files={"file": ("cdr.csv", b"caller,receiver\nN-1,N-2\n", "text/csv")},
+            data={"source_type": "CDR"},
+        )
+        assert up.status_code == 201, up.text
+        assert case_id not in intel_mod._cache
+
+        # Registering a source invalidates it again.
+        fresh = client.get(f"/api/v1/cases/{cn}/intelligence", headers=auth)
+        assert fresh.status_code == 200
+        assert case_id in intel_mod._cache
+
+        reg = client.post(
+            f"/api/v1/cases/{cn}/sources",
+            json={"source_id": "REG-1", "filename": "reg.csv", "source_type": "CDR",
+                  "payload": {"records": [{"id": "1", "fields": {"caller": "N-5"}}]}},
+            headers=auth,
+        )
+        assert reg.status_code == 201, reg.text
+        assert case_id not in intel_mod._cache  # registration dropped the cache again
+
+    def test_other_case_cache_survives_mutation(self, api_ctx):
+        from app.api.v1 import intelligence as intel_mod
+
+        client, auth, ca, cb = api_ctx["client"], api_ctx["auth"], api_ctx["ca"], api_ctx["cb"]
+
+        rb = client.get(f"/api/v1/cases/{cb}/intelligence", headers=auth)
+        assert rb.status_code == 200
+        case_b_id = rb.json()["case_id"]
+        assert case_b_id in intel_mod._cache
+
+        # Mutate Case A only -> Case B's entry stays.
+        up = client.post(
+            f"/api/v1/cases/{ca}/sources/upload",
+            headers=auth,
+            files={"file": ("acdr.csv", b"caller,receiver\nA-1,A-2\n", "text/csv")},
+            data={"source_type": "CDR"},
+        )
+        assert up.status_code == 201, up.text
+        assert case_b_id in intel_mod._cache  # Case B untouched
 
 
 # ---------------------------------------------------------------------------
@@ -574,3 +798,33 @@ class TestIntegrityPipelineApi:
         events = client.get(f"/api/v1/integrity/{api_ctx['ca']}/events", headers=auth).json()["events"]
         decisions = [e for e in events if e["event_type"] == "ANALYST_DECISION"]
         assert len(decisions) == 1
+
+    def test_reprocessing_source_does_not_duplicate_ledger_events(self, api_ctx):
+        """The same source processed twice must NOT create duplicate ledger
+        events / Merkle commitments / blocks (content-versioned identity)."""
+        client, auth = api_ctx["client"], api_ctx["auth"]
+        sid, _ = self._upload_process(
+            api_ctx, api_ctx["ca"], b"caller,receiver,time\nN-11,N-12,2026-09-01T10:00\n",
+            "cdr.csv", "CDR",
+        )
+
+        def _kinds_and_blocks():
+            events = client.get(f"/api/v1/integrity/{api_ctx['ca']}/events", headers=auth).json()["events"]
+            kinds: dict[str, int] = {}
+            for e in events:
+                kinds[e["event_type"]] = kinds.get(e["event_type"], 0) + 1
+            ledger = client.get(f"/api/v1/integrity/{api_ctx['ca']}/ledger", headers=auth).json()
+            return kinds, len(ledger)
+
+        before_kinds, blocks_before = _kinds_and_blocks()
+        assert before_kinds.get("EVIDENCE_PROCESSED") == 1
+        assert before_kinds.get("RECORD_BATCH_REGISTERED") == 1
+
+        # Reprocess the same (unchanged) source.
+        again = client.post(f"/api/v1/cases/{api_ctx['ca']}/sources/{sid}/process", headers=auth)
+        assert again.status_code == 200, again.text
+        assert again.json()["metrics"]["integrity_status"] == "REGISTERED"
+
+        after_kinds, blocks_after = _kinds_and_blocks()
+        assert after_kinds == before_kinds  # no duplicate events
+        assert blocks_after == blocks_before  # no extra chained blocks

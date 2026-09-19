@@ -10,6 +10,7 @@ from app.core.neo4j import neo4j_connection
 from app.graph.types import GraphEdge, GraphNode, GraphSubgraph
 
 import json
+import re
 
 # Properties Neo4jStore is allowed to write on nodes/edges. Everything else is
 # intentionally dropped (configuration denies arbitrary property keys).
@@ -44,6 +45,17 @@ def _neo4j_value(value: Any) -> Any:
         # Empty maps are valid; non-empty need flattening or key-dropping.
         return json.dumps(value)
     return str(value)
+
+
+# Only safe, injectable-proof label/rel-type tokens are ever interpolated into
+# Cypher. Everything else falls back to a fixed default so a data-driven type
+# can never inject query text.
+_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+
+
+def _safe_label(value: Any, default: str) -> str:
+    token = str(value or "")
+    return token if _LABEL_RE.fullmatch(token) else default
 
 
 def _record_key(record) -> str:
@@ -271,7 +283,7 @@ class Neo4jStore:
     # --- mutations (used by materialization service) ---
 
     async def upsert_node(self, node: GraphNode) -> None:
-        label = node.type if node.type else "Entity"
+        label = _safe_label(node.type, "Entity")
         props = {k: v for k, v in (node.properties or {}).items() if k in _NODE_PROPS}
         set_clause, prop_params = _render_set("n", props)
         await self._run(
@@ -287,12 +299,13 @@ class Neo4jStore:
 
     async def upsert_edge(self, edge: GraphEdge) -> None:
         props = {k: v for k, v in (edge.properties or {}).items() if k in _EDGE_PROPS}
+        rel_type = _safe_label(edge.type, "LINKED_WITH")
         set_clause, prop_params = _render_set("r", props)
         await self._run(
             f"""
             MATCH (a {{id: $source_id}})
             MATCH (b {{id: $target_id}})
-            MERGE (a)-[r:{edge.type}]->(b)
+            MERGE (a)-[r:{rel_type}]->(b)
             SET r.updated_at = datetime(){set_clause}
             """,
             source_id=edge.source_id,

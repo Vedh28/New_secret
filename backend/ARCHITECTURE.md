@@ -345,3 +345,64 @@ The local implementation is a PERMISSIONED CHAINED INTEGRITY LEDGER (database
 backed) -- not a decentralized public blockchain, and not cryptocurrency.
 An institutional deployment may back the same `BlockchainLedger` abstraction
 with a permissioned distributed ledger (e.g. Hyperledger Fabric).
+
+## Durable Decision Records (final hardening)
+
+### Provenance stamping is a targeted JSON merge (no lost updates)
+`SourceService.process()` persists parsed records + provenance in the
+authoritative transaction. Afterwards `_enrich_provenance_isolated()` stamps
+the committed ledger references (`integrity_tx`, `integrity_block`,
+`merkle_root`) + the per-record provenance entries onto the committed source's
+`metadata_json`.
+
+The stamp is a **dialect JSON-merge UPDATE** (`jsonb_set` on PostgreSQL,
+`json_set` on SQLite) that rewrites ONLY the provenance / integrity keys in
+place. It never reads-and-replaces the whole `metadata_json` document, so an
+unrelated metadata key written concurrently by another transaction can never be
+silently overwritten. `metadata_json` stays a single source of truth for the
+source's own content; ownership of the four integrity keys is partitioned to the
+integrity path. (Regression suite: `test_source_provenance_concurrency.py`.)
+
+### Source (re-)processing is content-versioned and idempotent
+Re-running `POST /{case}/sources/{source_id}/process` on an UNCHANGED source is
+a no-op commit-wise: every ledger event
+(`EVIDENCE_PROCESSED` / `RECORD_BATCH_REGISTERED` / `ENTITY_EXTRACTED` /
+`RELATIONSHIP_DERIVED`) carries a dedupe key derived from its content (Merkle
+root / counts), so re-processing collapses onto the existing outbox rows and
+NEVER duplicates ledger events, Merkle commitments or chained blocks.
+Reprocessing with CHANGED records produces a new root -> an explicit new
+commitment, i.e. version semantics are content-defined. Authoritative entity /
+relationship persistence was already idempotent (merge by
+(case, identity, type) / (case, type, source, target)).
+
+### Graph projection is derived, synchronously refreshed
+PostgreSQL is the source of truth; Neo4j (or the memory store) is a derived
+projection. `process_source` materializes the case graph BEFORE committing the
+authoritative processing transaction and intentionally aborts the whole
+processing commit if the graph refresh fails: the caller sees a clear
+500 "rolled back; fix the graph store and retry" instead of a false
+"processed successfully" with a diverged projection. No silent divergence is
+ever hidden. A ledger/batch failure (which happens AFTER the commit) never
+rolls back the authoritative processing result.
+
+### Per-process intelligence cache is invalidated at every mutation
+`CaseIntelligenceService` caches per case in-process (`_cache`), so the
+following endpoints explicitly call `invalidate_case_cache(case_id)`:
+source upload, source register, source process, source delete, and analyst
+decision. Case A mutations never touch Case B's entry. The cache is ephemeral
+in-memory optimization, not authoritative storage.
+
+### Analyst decision upsert (final)
+`LinkDecisionRepository.upsert_pair()` is a database-atomic upsert keyed by
+`UNIQUE(case_id, entity_a, entity_b)`. Concurrent requests for the same pair
+collapse onto one row; `previous_status` auto-advances from the existing row's
+`new_status`. PostgreSQL validation lives in
+`test_api_decision_concurrency_pg.py` (CI `backend-integration-pg`); the SQLite
+parallel is `test_api_decision_concurrency.py`.
+
+### Session-factory override hygiene
+Tests point isolated integrity work at a test engine via
+`set_integrity_session_factory`. Every fixture that overrides it restores the
+previously installed factory on teardown (even on test failure), and the
+production default (`None`) always falls back to `async_session_factory`.
+No test installed override can leak into another test or into production.

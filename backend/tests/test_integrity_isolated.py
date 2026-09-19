@@ -124,3 +124,28 @@ class TestIsolatedRunner:
             actions = (await fresh.execute(
                 text("SELECT action FROM audit_logs ORDER BY id"))).scalars().all()
             assert list(actions) == ["a", "b"]
+
+    async def test_override_falls_back_to_production_factory(self, isolated_ctx):
+        """Restoring `None` must route isolated sessions back to the configured
+        application factory — a test override can never leak into production."""
+        import app.blockchain.isolated as isolated_mod
+
+        assert isolated_mod._integrity_session_factory is isolated_ctx["maker"]
+        overridden = isolated_mod._make_session()
+        assert overridden.get_bind().dialect.name == "sqlite"
+        assert str(overridden.get_bind().url) == str(isolated_ctx["engine"].url)
+        await overridden.close()
+
+        # Restore the production default exactly like test teardown does.
+        previous = isolated_mod._integrity_session_factory
+        isolated_mod.set_integrity_session_factory(None)
+        try:
+            from app.core.database import async_session_factory
+            produced = isolated_mod._make_session()
+            bind = produced.get_bind()
+            default_bind = async_session_factory().get_bind()
+            assert str(bind.url) == str(default_bind.url)
+            assert default_bind.dialect.name == "postgresql"  # production engine
+            await produced.close()
+        finally:
+            isolated_mod.set_integrity_session_factory(previous)

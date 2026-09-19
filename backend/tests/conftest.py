@@ -60,7 +60,11 @@ def db_client() -> TestClient:
 
     # Isolated integrity transactions (best-effort ledger work triggered from
     # API endpoints) must share THIS SQLite engine, not the production engine.
+    # Restore the PREVIOUS factory value on teardown (never a hard-coded None),
+    # so a nested/overlapping override cannot be silently clobbered.
+    from app.blockchain.isolated import _integrity_session_factory
     from app.blockchain.isolated import set_integrity_session_factory
+    previous_factory = _integrity_session_factory
     set_integrity_session_factory(test_session)
 
     async def override_session():
@@ -75,7 +79,7 @@ def db_client() -> TestClient:
     with TestClient(_app) as test_client:
         yield test_client
     _app.dependency_overrides.clear()
-    set_integrity_session_factory(None)  # restore production default
+    set_integrity_session_factory(previous_factory)  # restore prior value
     asyncio.run(engine.dispose())
 
 

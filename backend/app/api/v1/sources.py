@@ -1,10 +1,13 @@
 """Case data source endpoints (Phase 2-3)."""
+import json as _json
 import logging
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from sqlalchemy import Integer, String, func, literal, update
 
 from app.api.deps import CurrentUser, DbSession, GraphStoreDep, RequireAnalyst
+from app.models.source import Source
 from app.repositories.case_repository import CaseRepository
 from app.schemas.source import SourceCreate, SourceProcessResult, SourceRead, SourceUploadResult
 from app.services.source_service import SourceService
@@ -50,6 +53,8 @@ async def upload_source(
     # Commit the AUTHORITATIVE upload transaction BEFORE best-effort integrity,
     # so any integrity failure can never poison the source's transaction.
     await session.commit()
+    from app.api.v1.intelligence import invalidate_case_cache
+    invalidate_case_cache(case_id)
 
     integrity_status = await _register_evidence_integrity_isolated(
         case_id, file.filename, source_type, result.source_id,
@@ -108,6 +113,9 @@ async def register_source(
     await _audit(session, user, "source_registered", payload.source_id, {"case_key": case_key, "source_type": payload.source_type})
     await session.commit()
     await session.refresh(source)
+    from app.api.v1.intelligence import invalidate_case_cache
+    case_id = await _resolve_case_id(session, case_key)
+    invalidate_case_cache(case_id)
     return _to_read(source)
 
 
@@ -216,7 +224,15 @@ async def _register_batch_isolated(case_id: int, source_id: str, metrics: dict,
 
 
 async def _enrich_provenance_isolated(case_id: int, source_id: str, batch: dict) -> None:
-    """Best-effort: stamp the ledger tx/block onto committed source provenance."""
+    """Best-effort: stamp the ledger tx/block onto committed source provenance.
+
+    Uses a TARGETED dialect JSON-merge UPDATE that rewrites ONLY the four
+    integrity keys (provenance / integrity_tx / integrity_block / merkle_root)
+    inside `metadata_json`. Unrelated metadata (records, text, tags, ...) written
+    concurrently by another transaction can never be lost, because the update
+    never reads-and-replaces the whole JSON document — the database merges the
+    owned keys in place.
+    """
     from app.blockchain.isolated import run_integrity_isolated
 
     async def _builder(session):
@@ -230,19 +246,53 @@ async def _enrich_provenance_isolated(case_id: int, source_id: str, batch: dict)
         for item in provenance:
             item["transaction_id"] = batch["transaction_id"]
             item["block_index"] = batch["block_index"]
-        row.metadata_json = {
-            **row.metadata_json,
-            "provenance": provenance,
-            "integrity_tx": batch["transaction_id"],
-            "integrity_block": batch["block_index"],
-            "merkle_root": batch.get("merkle_root"),
-        }
-        await SourceRepository(session).save(row)
+        dialect = session.get_bind().dialect.name
+        stmt = (
+            update(Source)
+            .where(Source.case_id == case_id, Source.source_id == source_id)
+            .values(metadata_json=_provenance_merge_expression(
+                dialect,
+                provenance=provenance,
+                tx=batch["transaction_id"],
+                block_index=batch["block_index"],
+                merkle_root=batch.get("merkle_root"),
+            ))
+        )
+        await session.execute(stmt)
 
     ok, _r, error = await run_integrity_isolated(_builder)
     if not ok:
         logger.warning("provenance enrichment failed case=%s source=%s type=%s",
                        case_id, source_id, type(error).__name__ if error else "unknown")
+
+
+def _provenance_merge_expression(dialect: str, *, provenance: list, tx: str,
+                                 block_index: int, merkle_root: str | None):
+    """DB-level JSON merge that touches ONLY the provenance/integrity keys.
+
+    IP-targeted against lost updates: the previous implementation read the whole
+    `metadata_json`, mutated it in Python and saved the entire source, silently
+    overwriting any unrelated metadata written concurrently. This expression
+    merges just the four owned keys inside the JSON document:
+      - PostgreSQL: jsonb_set (create_missing=true)
+      - SQLite/other: JSON1 json_set (+ json() so arrays stay arrays)
+    """
+    column = Source.metadata_json
+    prov_lit = literal(_json.dumps(provenance), type_=String())
+    tx_lit = literal(tx, type_=String())
+    block_lit = literal(int(block_index), type_=Integer())
+    root_lit = literal(_json.dumps(merkle_root), type_=String())
+    if dialect == "postgresql":
+        expr = func.jsonb_set(column, literal("{provenance}"), func.to_jsonb(prov_lit), True)
+        expr = func.jsonb_set(expr, literal("{integrity_tx}"), func.to_jsonb(tx_lit), True)
+        expr = func.jsonb_set(expr, literal("{integrity_block}"), func.to_jsonb(block_lit), True)
+        expr = func.jsonb_set(expr, literal("{merkle_root}"), func.to_jsonb(root_lit), True)
+        return expr
+    expr = func.json_set(column, literal("$.provenance"), func.json(prov_lit))
+    expr = func.json_set(expr, literal("$.integrity_tx"), tx_lit)
+    expr = func.json_set(expr, literal("$.integrity_block"), block_lit)
+    expr = func.json_set(expr, literal("$.merkle_root"), func.json(root_lit))
+    return expr
 
 
 @router.delete(
