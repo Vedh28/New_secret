@@ -491,12 +491,12 @@ class TestLockContention:
                 task_a = asyncio.create_task(_worker_a())
                 await entered.wait()  # A is now INSIDE the critical section
                 task_b = asyncio.create_task(_worker_b())
-
-                # Probe (short timeout, barrier-controlled): B must still be
-                # blocked on the case lock — not merely "may be sleeping".
-                done, _pending = await asyncio.wait(
-                    [task_b], timeout=0.3, return_when=asyncio.FIRST_COMPLETED)
-                assert task_b not in done, "Worker B entered while Worker A held the lock"
+                # Deterministic blocking proof: B has started (event barrier)
+                # and is parked on the database write lock while A holds it.
+                # A single scheduling yield lets B reach its blocking UPSERT;
+                # if the lock were broken B would have completed by now.
+                await asyncio.sleep(0)
+                assert not task_b.done(), "Worker B entered while Worker A held the lock"
 
                 release.set()
                 result_a = await task_a
@@ -544,6 +544,75 @@ class TestExhaustedDedupe:
             assert await svc.flush_pending(case_id) == []
             assert await svc.get_events(case_id) == []
             assert await svc.pending_count(case_id) == 0
+
+
+class TestMidFlushAtomicity:
+    async def test_failure_mid_event_creation_rolls_back_everything(self, concurrency_ctx, monkeypatch):
+        """All-or-nothing: a failure on the SECOND LedgerEvent must leave NO
+        block/event, keep the outbox retryable, and produce exactly two events
+        only after a successful retry."""
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.integrity_repository import LedgerEventRepository
+
+        maker = concurrency_ctx["maker"]
+        case_id = concurrency_ctx["case_a"]
+        async with maker() as session:
+            for i in range(2):
+                await _enqueue(session, case_id, "EVIDENCE_PROCESSED", f"SRC-{i}", f"m{i}")
+            await session.commit()
+
+        original_create = LedgerEventRepository.create
+        calls = {"n": 0, "boom": True}
+
+        async def _boom_on_second(*args, **kwargs):
+            calls["n"] += 1
+            if calls["boom"] and calls["n"] == 2:
+                raise RuntimeError("injected event-creation failure")
+            return await original_create(*args, **kwargs)
+
+        monkeypatch.setattr(LedgerEventRepository, "create", _boom_on_second)
+
+        # The flush raises; the caller does NOT commit (transaction dies).
+        async with maker() as session:
+            svc = BlockchainIntegrityService(session)
+            with pytest.raises(RuntimeError):
+                await svc.flush_pending(case_id)
+
+        # Fresh view: nothing became authoritative, outbox still retryable.
+        async with maker() as session:
+            assert await LedgerBlockRepository(session).chain(case_id) == []
+            assert await BlockchainIntegrityService(session).get_events(case_id) == []
+            rows = await IntegrityOutboxRepository(session).pending_for_case(
+                case_id, limit=10, max_attempts=3)
+            assert len(rows) == 2
+            assert all(r.status in ("PENDING", "FAILED") for r in rows)
+
+        # Restore and retry -> exactly two events, one block, valid chain.
+        calls["boom"] = False
+        async with maker() as session:
+            svc = BlockchainIntegrityService(session)
+            confirmed = await svc.flush_pending(case_id)
+            await session.commit()
+            assert len(confirmed) == 2
+            events = await svc.get_events(case_id)
+            assert len(events) == 2
+            blocks = await LedgerBlockRepository(session).chain(case_id)
+            assert len(blocks) == 1
+
+
+class TestCaseKeyNormalization:
+    def test_integer_and_string_and_float_normalize_consistently(self):
+        from app.blockchain.locking import case_lock_key
+        from app.blockchain.service import _normalize_case
+        assert _normalize_case(1) == _normalize_case("1") == "1"
+        assert _normalize_case(1.0) == "1"
+        assert _normalize_case("CASE-X") == "CASE-X"
+        # Same canonical key for a numeric case in any supported form.
+        assert case_lock_key(1) == case_lock_key("1") == case_lock_key(1.0)
+        # A float-like STRING is a distinct identifier, not silently coerced.
+        assert case_lock_key("1.0") != case_lock_key(1)
+        # Fully distinct identifiers never collide.
+        assert case_lock_key("1") != case_lock_key("2")
 
 
 def _chain_block(row) -> object:

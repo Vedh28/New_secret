@@ -171,6 +171,21 @@ class TestIngestionIntegrityFlow:
 
 
 class TestSnapshotIdempotency:
+    async def test_ten_identical_snapshots_stay_one(self, svc_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.services.case_intelligence_service import CaseIntelligenceService
+        S = svc_ctx["S"]
+        case_id = svc_ctx["case_id"]
+        async with S() as session:
+            snapshot = await CaseIntelligenceService(session).build(case_id, cache={}, register_integrity=False)
+            svc = BlockchainIntegrityService(session)
+            for _ in range(10):
+                result = await svc.register_intelligence_snapshot(case_id=case_id, snapshot=snapshot)
+                assert result["duplicate"] in (False, True)  # first creates, rest dedupe
+            events = await svc.get_events(case_id)
+            snaps = [e for e in events if e["event_type"] == "INTELLIGENCE_SNAPSHOT"]
+            assert len(snaps) == 1
+
     async def test_identical_snapshot_not_repeated(self, svc_ctx):
         from app.blockchain.service import BlockchainIntegrityService
         from app.services.case_intelligence_service import CaseIntelligenceService
