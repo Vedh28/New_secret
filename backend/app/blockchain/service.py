@@ -56,8 +56,14 @@ def _tx_id() -> str:
 
 
 def _normalize_case(case_id) -> str:
-    """Ledger tables key on the numeric case id as its canonical string."""
-    return str(int(case_id)) if isinstance(case_id, (int, float)) else str(case_id)
+    """Canonical case-ID string for the integrity layer (single source).
+
+    Delegates to `canonical_case_id` so the advisory-lock key, ledger,
+    outbox, evidence, snapshot and decision identities share ONE contract.
+    Invalid IDs raise ValueError instead of being silently truncated.
+    """
+    from app.blockchain.locking import canonical_case_id
+    return canonical_case_id(case_id)
 
 
 class BlockchainIntegrityService:
@@ -331,6 +337,9 @@ class BlockchainIntegrityService:
                                       decision: str, evidence_ids: list[str], notes: str | None,
                                       actor_id: int | None, snapshot_hash: str = "") -> dict:
         case_id = _normalize_case(case_id)
+        # Canonical pair ordering: A<->B and B<->A are the SAME logical pair,
+        # so their integrity identity and dedupe key must not diverge.
+        entity_a, entity_b = sorted([str(entity_a), str(entity_b)])
         pair = f"{entity_a}<->{entity_b}"
         payload = hash_decision_payload(
             case_id=case_id, entity_a=entity_a, entity_b=entity_b, decision=decision,

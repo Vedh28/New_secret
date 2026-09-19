@@ -75,6 +75,7 @@ REENTRANCY
 from __future__ import annotations
 
 import hashlib
+import math
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -85,15 +86,60 @@ from sqlalchemy.ext.asyncio import AsyncSession
 _LOCK_NAMESPACE = b"secret:case-flush:"
 
 
-def case_lock_key(case_id) -> int:
-    """Deterministic signed 64-bit advisory-lock key from a case identifier.
+def canonical_case_id(case_id) -> str:
+    """THE canonical case-ID representation for the entire integrity layer.
 
-    Same normalized input -> same key; safe across processes/restarts; never
-    Python's randomized hash().
+    Application case IDs are positive integer database identifiers. Accepts:
+
+      int 1              -> "1"
+      str "1" / "001"    -> "1"
+      float 1.0          -> "1"
+
+    Rejects (ValueError) everything else — fractional floats (1.9), NaN,
+    infinity, zero/negative values, booleans, empty/None and malformed strings
+    like "1.0" or "CASE-X" — so a bad ID can never be silently truncated into
+    a DIFFERENT valid case. Every integrity path must use this single function
+    so the advisory-lock key, ledger, outbox, evidence, snapshot and decision
+    identities all agree.
     """
-    if isinstance(case_id, (int, float)):
-        case_id = str(int(case_id))
-    digest = hashlib.sha256(_LOCK_NAMESPACE + str(case_id).encode("utf-8")).digest()[:8]
+    if case_id is None or case_id == "":
+        raise ValueError("case_id is required")
+    if isinstance(case_id, bool):
+        raise ValueError(f"invalid case_id (bool): {case_id!r}")
+    if isinstance(case_id, int):
+        if case_id <= 0:
+            raise ValueError(f"case_id must be a positive integer: {case_id}")
+        return str(case_id)
+    if isinstance(case_id, float):
+        if not math.isfinite(case_id):
+            raise ValueError(f"case_id must be finite: {case_id!r}")
+        if case_id != int(case_id):
+            raise ValueError(f"case_id must not have a fractional part: {case_id!r}")
+        value = int(case_id)
+        if value <= 0:
+            raise ValueError(f"case_id must be a positive integer: {case_id!r}")
+        return str(value)
+    if isinstance(case_id, str):
+        text_value = case_id.strip()
+        if not text_value:
+            raise ValueError("case_id is required")
+        if not text_value.isdigit():
+            raise ValueError(f"case_id must be a positive integer: {case_id!r}")
+        value = int(text_value)
+        if value <= 0:
+            raise ValueError(f"case_id must be a positive integer: {case_id!r}")
+        return str(value)
+    raise ValueError(f"unsupported case_id type: {type(case_id).__name__}")
+
+
+def case_lock_key(case_id) -> int:
+    """Deterministic signed 64-bit advisory-lock key from a canonical case ID.
+
+    The key derives from `canonical_case_id` (same normalized input -> same
+    key, safe across processes/restarts, never Python's randomized hash()).
+    """
+    case_id = canonical_case_id(case_id)
+    digest = hashlib.sha256(_LOCK_NAMESPACE + case_id.encode("utf-8")).digest()[:8]
     value = int.from_bytes(digest, "big")
     # Map unsigned 64-bit into the signed BIGINT range PostgreSQL accepts.
     return value - (1 << 64) if value >= (1 << 63) else value
@@ -119,7 +165,7 @@ async def acquire_case_flush_lock(session: AsyncSession, case_id) -> AsyncIterat
         # the engine's reserved write lock for the transaction. The nonce makes
         # the write observable every time so the conflict-update path always
         # executes — never a no-op like INSERT ... ON CONFLICT DO NOTHING.
-        normalized = str(int(case_id)) if isinstance(case_id, (int, float)) else str(case_id)
+        normalized = canonical_case_id(case_id)
         holder = uuid.uuid4().hex[:8]
         await session.execute(
             text(

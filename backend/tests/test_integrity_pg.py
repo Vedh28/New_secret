@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.blockchain.locking import case_lock_key
 
 
-@pytest.mark.integration
+@pytest.mark.integration_pg
 @pytest.mark.asyncio
 async def test_pg_advisory_lock_case_scoping_and_release() -> None:
     from app.core.config import get_settings
@@ -40,8 +40,8 @@ async def test_pg_advisory_lock_case_scoping_and_release() -> None:
     engine = create_async_engine(url)
     Maker = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        key_a = case_lock_key("CASE-TEST-A")
-        key_b = case_lock_key("CASE-TEST-B")
+        key_a = case_lock_key(101)
+        key_b = case_lock_key(202)
         assert key_a != key_b
 
         async with Maker() as conn_a:

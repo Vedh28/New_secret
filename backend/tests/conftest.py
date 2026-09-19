@@ -77,39 +77,86 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register custom markers."""
     config.addinivalue_line(
         "markers",
-        "integration: requires external services (PostgreSQL / Neo4j) to be running",
+        "integration: requires PostgreSQL AND Neo4j (legacy generic)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration_pg: requires PostgreSQL only",
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration_neo4j: requires Neo4j only",
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration_full: requires PostgreSQL and Neo4j (full stack)",
     )
 
 
+def _requires(item) -> set[str]:
+    """Return the set of external services a test item depends on."""
+    marker = item.get_closest_marker
+    if marker("integration_pg") is not None:
+        return {"pg"}
+    if marker("integration_neo4j") is not None:
+        return {"neo4j"}
+    if marker("integration_full") is not None:
+        return {"pg", "neo4j"}
+    if marker("integration") is not None:
+        return {"pg", "neo4j"}
+    return set()
+
+
+def _is_integration(item) -> bool:
+    return bool(_requires(item))
+
+
+async def _probe_pg() -> bool:
+    try:
+        return (await check_database_connection()).get("status") == "ok"
+    except Exception:  # noqa: BLE001 - probe failure == unavailable
+        return False
+
+
+async def _probe_neo4j() -> bool:
+    try:
+        return (await check_graph_connection()).get("status") == "ok"
+    except Exception:  # noqa: BLE001 - probe failure == unavailable
+        return False
+
+
 def pytest_collection_modifyitems(session, config, items) -> None:  # type: ignore[no-untyped-def]
-    """Force-skip integration tests in test mode.
+    """Gate integration tests per dependency, never globally.
 
-    Unit runs are deterministic and must never depend on live PostgreSQL/Neo4j.
-    (Outside test mode we additionally auto-skip them when services are down.)
+    Unit runs (SECRET_ENV=test) skip ALL integration markers deterministically.
+    Outside test mode each service is probed INDEPENDENTLY, so PostgreSQL
+    integration tests run when only PostgreSQL is available, and Neo4j tests
+    need only Neo4j. Collection never opens external connections unless at least
+    one integration test was collected.
     """
-    if os.environ.get("SECRET_ENV") == "test":
-        for item in items:
-            if "integration" in item.keywords:
-                item.add_marker(pytest.mark.skip(reason="integration disabled under SECRET_ENV=test"))
-        return
-
     import asyncio
 
-    async def _probe() -> tuple[bool, bool]:
-        db_ok = (await check_database_connection()).get("status") == "ok"
-        graph_ok = (await check_graph_connection()).get("status") == "ok"
-        return db_ok, graph_ok
+    integration_items = [item for item in items if _is_integration(item)]
 
-    try:
-        db_ok, graph_ok = asyncio.run(_probe())
-    except Exception:  # noqa: BLE001 - never let probe failure break collection
-        db_ok = graph_ok = False
+    if os.environ.get("SECRET_ENV") == "test":
+        for item in integration_items:
+            item.add_marker(
+                pytest.mark.skip(reason="integration disabled under SECRET_ENV=test")
+            )
+        return
 
-    for item in items:
-        if "integration" in item.keywords:
-            if not (db_ok and graph_ok):
-                item.add_marker(
-                    pytest.mark.skip(
-                        reason="external services unreachable (PostgreSQL/Neo4j not running)"
-                    )
+    if not integration_items:
+        return  # no integration tests -> never probe external services
+
+    pg_ok = asyncio.run(_probe_pg())
+    neo4j_ok = asyncio.run(_probe_neo4j())
+    available = {name for name, ok in (("pg", pg_ok), ("neo4j", neo4j_ok)) if ok}
+
+    for item in integration_items:
+        missing = _requires(item) - available
+        if missing:
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=f"external service(s) unavailable: {', '.join(sorted(missing))}"
                 )
+            )

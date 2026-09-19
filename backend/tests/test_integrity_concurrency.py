@@ -92,24 +92,21 @@ async def _flush_twice(maker, case_id: str) -> list[list]:
 class TestCaseLockKey:
     def test_same_input_same_key(self):
         from app.blockchain.locking import case_lock_key
-        assert case_lock_key("CASE-2026-0001") == case_lock_key("CASE-2026-0001")
-        assert case_lock_key(1) == case_lock_key("1")
+        assert case_lock_key(1) == case_lock_key("1") == case_lock_key(1.0)
+        assert case_lock_key("001") == case_lock_key(1)
 
     def test_different_inputs_different_keys(self):
         from app.blockchain.locking import case_lock_key
-        keys = {case_lock_key(str(i)) for i in range(50)}
+        keys = {case_lock_key(i) for i in range(1, 51)}
         assert len(keys) == 50
 
     def test_int_range_and_sign(self):
         from app.blockchain.locking import case_lock_key
         min_value = -(1 << 63)
         max_value = (1 << 63) - 1
-        for case_id in ("1", "2", "999999", "CASE-A", "CASE-B"):
+        for case_id in (1, 2, 999999, 123456789012345678):
             key = case_lock_key(case_id)
             assert isinstance(key, int)
-            assert min_value <= key <= max_value
-        for case_id in (0, (1 << 64) - 1):
-            key = case_lock_key(case_id)
             assert min_value <= key <= max_value
 
 
@@ -601,18 +598,224 @@ class TestMidFlushAtomicity:
 
 
 class TestCaseKeyNormalization:
-    def test_integer_and_string_and_float_normalize_consistently(self):
-        from app.blockchain.locking import case_lock_key
-        from app.blockchain.service import _normalize_case
-        assert _normalize_case(1) == _normalize_case("1") == "1"
-        assert _normalize_case(1.0) == "1"
-        assert _normalize_case("CASE-X") == "CASE-X"
-        # Same canonical key for a numeric case in any supported form.
+    def test_valid_formats_canonicalize(self):
+        from app.blockchain.locking import canonical_case_id, case_lock_key
+        assert canonical_case_id(1) == canonical_case_id("1") == canonical_case_id("001") == "1"
+        assert canonical_case_id(1.0) == "1"
         assert case_lock_key(1) == case_lock_key("1") == case_lock_key(1.0)
-        # A float-like STRING is a distinct identifier, not silently coerced.
-        assert case_lock_key("1.0") != case_lock_key(1)
-        # Fully distinct identifiers never collide.
-        assert case_lock_key("1") != case_lock_key("2")
+
+    def test_invalid_inputs_rejected(self):
+        from app.blockchain.locking import canonical_case_id
+        import pytest as _pytest
+        for bad in (None, "", "   ", "1.0", "CASE-X", "-1", "1e2",
+                    -1, 0, True, False, 1.9, float("nan"), float("inf"), float("-inf")):
+            with _pytest.raises(ValueError):
+                canonical_case_id(bad)
+
+    def test_distinct_ids_never_collide(self):
+        from app.blockchain.locking import case_lock_key
+        keys = {case_lock_key(str(i)) for i in range(1, 51)}
+        assert len(keys) == 50
+
+    def test_key_is_signed_bigint_range(self):
+        from app.blockchain.locking import case_lock_key
+        lo, hi = -(1 << 63), (1 << 63) - 1
+        for case_id in (1, 2, 999999, 12345678901234567890):
+            key = case_lock_key(case_id)
+            assert isinstance(key, int) and lo <= key <= hi
+
+
+class TestSnapshotConcurrency:
+    async def test_identical_snapshot_concurrent_single_commitment(self, concurrency_ctx):
+        from app.blockchain.hashes import hash_intelligence_snapshot
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.integrity_repository import IntegrityOutboxRepository
+
+        maker = concurrency_ctx["maker"]
+        case_id = concurrency_ctx["case_a"]
+        snapshot = {"case_id": case_id, "entities": [], "relationships": [], "evidence": [],
+                    "anomalies": [], "potential_links": [], "evidence_gaps": [],
+                    "recommendations": [], "network_dna": {}, "entity_priorities": []}
+        snapshot_hash = hash_intelligence_snapshot(snapshot)
+
+        async def _reg(session, svc):
+            result = await svc.register_intelligence_snapshot(case_id=case_id, snapshot=snapshot, actor_id=None)
+            await session.commit()
+            return result
+
+        async with maker() as sa:
+            async with maker() as sb:
+                results = await asyncio.gather(
+                    _reg(sa, BlockchainIntegrityService(sa)),
+                    _reg(sb, BlockchainIntegrityService(sb)),
+                )
+
+        assert sum(1 for r in results if r["duplicate"]) == 1  # exactly one creates
+        async with maker() as session:
+            events = await BlockchainIntegrityService(session).get_events(case_id)
+            snaps = [e for e in events if e["event_type"] == "INTELLIGENCE_SNAPSHOT"]
+            assert len(snaps) == 1
+            assert snaps[0]["payload_json"].get("snapshot_hash") == snapshot_hash
+            outbox = await IntegrityOutboxRepository(session).pending_for_case(case_id, limit=50,
+                                                                                max_attempts=3)
+            assert outbox == []  # CONFIRMED -> not pending
+            blocks = await LedgerBlockRepository(session).chain(case_id)
+            assert len(blocks) == 1
+            verifying = LocalPermissionedLedger().verify_chain(
+                [_chain_block(b) for b in blocks], LocalPermissionedLedger().genesis_params(case_id))
+            assert verifying.chain_valid is True
+
+
+class TestDecisionIdentity:
+    async def test_reversed_pair_is_same_identity(self, concurrency_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+        maker = concurrency_ctx["maker"]
+        case_id = concurrency_ctx["case_a"]
+
+        async def _decide(session, svc, a, b):
+            result = await svc.record_analyst_decision(
+                case_id=case_id, entity_a=a, entity_b=b, decision="CONFIRM",
+                evidence_ids=["E1"], notes="reviewed", actor_id=None)
+            await session.commit()
+            return result
+
+        async with maker() as session:
+            svc = BlockchainIntegrityService(session)
+            first = await _decide(session, svc, "P-A", "P-B")
+            second = await _decide(session, svc, "P-B", "P-A")
+        assert first["duplicate"] is False
+        assert second["duplicate"] is True  # canonical pair identity
+        async with maker() as session:
+            events = await BlockchainIntegrityService(session).get_events(case_id)
+            assert len([e for e in events if e["event_type"] == "ANALYST_DECISION"]) == 1
+
+    async def test_different_decisions_are_distinct(self, concurrency_ctx):
+        from app.blockchain.service import BlockchainIntegrityService
+        maker = concurrency_ctx["maker"]
+        case_id = concurrency_ctx["case_a"]
+
+        async def _decide(session, svc, decision):
+            result = await svc.record_analyst_decision(
+                case_id=case_id, entity_a="P-X", entity_b="P-Y", decision=decision,
+                evidence_ids=["E1"], notes="reviewed", actor_id=None)
+            await session.commit()
+            return result
+
+        async with maker() as session:
+            svc = BlockchainIntegrityService(session)
+            confirm = await _decide(session, svc, "CONFIRM")
+            reject = await _decide(session, svc, "REJECT")
+        assert confirm["duplicate"] is False
+        assert reject["duplicate"] is False  # different decision -> separate commitment
+        async with maker() as session:
+            events = await BlockchainIntegrityService(session).get_events(case_id)
+            decisions = [e for e in events if e["event_type"] == "ANALYST_DECISION"]
+            assert len(decisions) == 2
+            assert {e["payload_json"].get("decision") for e in decisions} == {"CONFIRM", "REJECT"}
+
+
+class TestEndToEndLifecycle:
+    async def test_full_lifecycle_no_duplicates(self, concurrency_ctx):
+        from types import SimpleNamespace
+
+        from app.blockchain.hashes import hash_canonical_record, hash_intelligence_snapshot
+        from app.blockchain.merkle import merkle_root
+        from app.blockchain.service import BlockchainIntegrityService
+        from app.repositories.integrity_repository import EvidenceIntegrityRepository
+
+        maker = concurrency_ctx["maker"]
+        case_a = concurrency_ctx["case_a"]
+        case_b = concurrency_ctx["case_b"]
+        snapshot = {"case_id": case_a, "anomalies": [], "evidence_gaps": [], "entities": [],
+                    "relationships": [], "evidence": [], "potential_links": [], "recommendations": [],
+                    "network_dna": {}, "entity_priorities": []}
+
+        async with maker() as session:
+            svc = BlockchainIntegrityService(session)
+            # 1-3 evidence versions + duplicate
+            v1 = await svc.register_evidence(case_id=case_a, source_id="SRC-A", source_type="FIR",
+                                             filename="fir.txt", evidence_hash="A" * 64,
+                                             content_hash="H1", actor_id=None)
+            assert v1["version"] == 1
+            v1_again = await svc.register_evidence(case_id=case_a, source_id="SRC-A", source_type="FIR",
+                                                   filename="fir.txt", evidence_hash="A" * 64,
+                                                   content_hash="H1", actor_id=None)
+            assert v1_again["version"] == 1  # duplicate content -> no new version
+            v2 = await svc.register_evidence(case_id=case_a, source_id="SRC-A", source_type="FIR",
+                                             filename="fir.txt", evidence_hash="B" * 64,
+                                             content_hash="H2", actor_id=None)
+            assert v2["version"] == 2
+            await session.commit()
+
+            # 5 processed batch with entity/relationship events
+            records = [
+                {"id": "1", "source_type": "FIR", "timestamp": "2026-09-01T10:00",
+                 "fields": {"entity": "Ramesh Verma"}},
+                {"id": "2", "source_type": "FIR", "timestamp": "2026-09-01T11:00",
+                 "fields": {"entity": "Nihal Singh"}},
+            ]
+            expected_root = merkle_root([hash_canonical_record(r) for r in records])
+            batch = await svc.register_processed_batch(case_id=case_a, source_id="SRC-A", source_type="FIR",
+                                                       records=records, actor_id=None,
+                                                       extraction={"entities": 2, "relationships": 1})
+            assert batch["merkle_root"] == expected_root  # root stored == root computed
+            await session.commit()
+
+            # 7-8 snapshot + duplicate
+            snap1 = await svc.register_intelligence_snapshot(case_id=case_a, snapshot=snapshot)
+            snap2 = await svc.register_intelligence_snapshot(case_id=case_a, snapshot=snapshot)
+            assert snap1["duplicate"] is False and snap2["duplicate"] is True
+            await session.commit()
+
+            # 9-10 decision + duplicate (reversed pair)
+            dec1 = await svc.record_analyst_decision(case_id=case_a, entity_a="P-1", entity_b="P-2",
+                                                     decision="CONFIRM", evidence_ids=["SRC-A"],
+                                                     notes="ok", actor_id=None)
+            dec2 = await svc.record_analyst_decision(case_id=case_a, entity_a="P-2", entity_b="P-1",
+                                                     decision="CONFIRM", evidence_ids=["SRC-A"],
+                                                     notes="ok", actor_id=None)
+            assert dec1["duplicate"] is False and dec2["duplicate"] is True
+            await session.commit()
+
+            # 11 report event
+            report = SimpleNamespace(id="REPORT-1", report_type="investigation_summary",
+                                     title="Lifecycle", sections=[], generated_at="2026-09-18T00:00:00Z")
+            rep = await svc.register_report(case_id=case_a, report=report, actor_id=None)
+            await session.commit()
+
+            # 12 flush any stragglers (no-op expected after confirms)
+            assert await svc.flush_pending(case_a) == []
+            await session.commit()
+
+            # 13-17 verify ledger + counts + outbox + versions
+            ver = await svc.verify_case(case_a)
+            assert ver["chain_valid"] is True
+            assert ver["event_consistency_valid"] is True
+
+            events = await svc.get_events(case_a)
+            kinds = {}
+            for e in events:
+                kinds[e["event_type"]] = kinds.get(e["event_type"], 0) + 1
+            assert kinds.get("EVIDENCE_REGISTERED") == 1
+            assert kinds.get("EVIDENCE_VERSION_CREATED") == 1
+            assert kinds.get("EVIDENCE_PROCESSED") == 1
+            assert kinds.get("RECORD_BATCH_REGISTERED") == 1
+            assert kinds.get("INTELLIGENCE_SNAPSHOT") == 1
+            assert kinds.get("ANALYST_DECISION") == 1
+            assert kinds.get("REPORT_GENERATED") == 1
+            blocks = await LedgerBlockRepository(session).chain(case_a)
+            verifying = LocalPermissionedLedger().verify_chain(
+                [_chain_block(b) for b in blocks], LocalPermissionedLedger().genesis_params(case_a))
+            assert verifying.chain_valid is True
+            assert await svc.pending_count(case_a) == 0
+
+            # 16-17 evidence version history
+            history = await EvidenceIntegrityRepository(session).history_for_source(case_a, "SRC-A")
+            assert [h.version for h in history] == [1, 2]
+
+            # 18 cross-case isolation
+            assert await svc.get_events(case_b) == []
+            assert (await svc.case_summary(case_b))["chain_status"] == "UNAVAILABLE"
 
 
 def _chain_block(row) -> object:

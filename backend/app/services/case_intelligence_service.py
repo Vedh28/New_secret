@@ -63,7 +63,8 @@ class CaseIntelligenceService:
         The fingerprint identity is (case_id + snapshot_hash + engine_version),
         so rebuilding the same analytical state does NOT create duplicate
         ledger events. Blockchain availability must never affect investigation
-        analytics, so failures are swallowed after leaving a retryable signal.
+        analytics, so failures are swallowed after leaving a retryable signal —
+        but they are logged (case id + error type only, never evidence).
         """
         try:
             from app.blockchain.service import BlockchainIntegrityService
@@ -73,8 +74,11 @@ class CaseIntelligenceService:
                 engine_version="1.x",
                 actor_id=actor_id,
             )
-        except Exception:  # noqa: BLE001 - integrity layer must never block analytics
-            pass
+        except Exception as exc:  # noqa: BLE001 - integrity layer must never block analytics
+            import logging
+            logging.getLogger("secret.integrity").warning(
+                "intelligence snapshot integrity enqueue failed case=%s type=%s", case_id,
+                type(exc).__name__)
 
     async def _load_decisions(self, case_id: int) -> dict[str, dict]:
         """Analyst decisions keyed by canonical '<->' sorted pair."""
