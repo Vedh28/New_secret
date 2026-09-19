@@ -415,7 +415,10 @@ async def _case_intelligence_sections(session: AsyncSession, case) -> list[Repor
                 }),
             )
         )
-    except Exception:  # noqa: BLE001 - integrity summary is optional in reports
-        pass
+    except Exception as exc:  # noqa: BLE001 - integrity summary is optional in reports
+        import logging
+        logging.getLogger("secret.integrity").debug(
+            "evidence integrity summary omitted from report case=%s type=%s",
+            getattr(case, "id", None), type(exc).__name__)
 
     return sections

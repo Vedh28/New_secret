@@ -112,8 +112,11 @@ async def assistant(
             result={"intent": structured.type, "found": structured.found},
         )
         await session.commit()
-    except Exception:  # noqa: BLE001 - best-effort audit, never breaks the answer
-        pass
+    except Exception as exc:  # noqa: BLE001 - best-effort audit
+        import logging
+        logging.getLogger("secret.audit").warning(
+            "assistant query audit failed case=%s type=%s",
+            payload.case_key, type(exc).__name__)
     return AssistantResponse(
         question=payload.question,
         answer=structured.summary,

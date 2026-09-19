@@ -401,6 +401,73 @@ class TestIntegrityIsolation:
         assert decisions.status_code == 200
         assert any(d["new_status"] == "DEFERRED" for d in decisions.json())
 
+    async def test_evidence_upload_survives_integrity_failure(self, api_ctx, monkeypatch):
+        """Source upload commits even when evidence integrity registration fails."""
+        from app.blockchain.service import BlockchainIntegrityService
+
+        client, auth, cn = api_ctx["client"], api_ctx["auth"], api_ctx["ca"]
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("ledger unavailable (injected)")
+
+        monkeypatch.setattr(BlockchainIntegrityService, "register_evidence", _boom)
+
+        r = client.post(
+            f"/api/v1/cases/{cn}/sources/upload",
+            headers=auth,
+            files={"file": ("cdr.csv", b"caller,receiver\nN-1,N-2\n", "text/csv")},
+            data={"source_type": "CDR"},
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["integrity_status"] == "LEDGER_UNAVAILABLE"  # integrity unavailable, upload OK
+        assert body["source_id"] == "CDR"
+
+        sources = client.get(f"/api/v1/cases/{cn}/sources", headers=auth)
+        assert sources.status_code == 200
+        assert any(s["source_id"] == "CDR" for s in sources.json())  # source persisted
+
+    async def test_report_survives_integrity_failure(self, api_ctx, monkeypatch):
+        """Report persists even when its integrity registration fails."""
+        from app.blockchain.service import BlockchainIntegrityService
+
+        client, auth, cn = api_ctx["client"], api_ctx["auth"], api_ctx["ca"]
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("ledger unavailable (injected)")
+
+        monkeypatch.setattr(BlockchainIntegrityService, "register_report", _boom)
+
+        r = client.post(
+            "/api/v1/reports/generate",
+            json={"report_type": "network_analysis", "case_number": cn},
+            headers=auth,
+        )
+        assert r.status_code == 201, r.text
+        report_id = r.json()["id"]
+
+        # Persisted report retrievable after the failed integrity registration.
+        got = client.get(f"/api/v1/reports/{report_id}", headers=auth)
+        assert got.status_code == 200
+        assert got.json()["id"] == report_id
+
+
+# ---------------------------------------------------------------------------
+# Cache consistency (per-process, ephemeral)
+# ---------------------------------------------------------------------------
+
+class TestCaseCacheInvalidation:
+    def test_invalidate_case_cache_removes_entry(self):
+        from app.api.v1 import intelligence as intel_mod
+        intel_mod._cache[1] = {"case_id": 1}
+        intel_mod._cache[2] = {"case_id": 2}
+        intel_mod.invalidate_case_cache(1)
+        assert 1 not in intel_mod._cache
+        assert 2 in intel_mod._cache  # other cases untouched
+        intel_mod.invalidate_case_cache(999)  # no error for unknown case
+        intel_mod.clear_cache()
+        assert intel_mod._cache == {}
+
 
 # ---------------------------------------------------------------------------
 # API-level

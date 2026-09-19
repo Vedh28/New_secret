@@ -156,7 +156,8 @@ class SourceService:
                              "text": str(raw.get("text", "")), **raw.get("fields", {})},
                         )
                     )
-                except Exception:  # noqa: BLE001
+                except (KeyError, TypeError, ValueError):
+                    # malformed record -> skip that record deterministically
                     continue
         elif text:
             records.append(

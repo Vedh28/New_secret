@@ -269,8 +269,9 @@ async def _audit(session, user, action: str, object_id: str = "", result: dict |
     try:
         from app.services.audit_service import AuditService
         await AuditService(session).record(user, action, object_type="source", object_id=object_id, result=result or {})
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 - best-effort audit
+        logger.warning("source audit failed action=%s source=%s type=%s",
+                       action, object_id, type(exc).__name__)
 
 
 def _to_read(source) -> SourceRead:

@@ -49,26 +49,25 @@ def _make_session() -> AsyncSession:
     return factory()
 
 
-async def run_integrity_isolated(builder: Callable[[AsyncSession], Awaitable[T]],
-                                 commit: bool = True) -> tuple[bool, T | None, Exception | None]:
+async def run_integrity_isolated(builder: Callable[[AsyncSession], Awaitable[T]]) -> tuple[bool, T | None, Exception | None]:
     """Run an integrity callable in its own committed transaction.
 
-    Returns (success, result, error). On failure the integrity session is
-    rolled back (never left open or half-committed); the caller's own session
-    is untouched. `commit=False` leaves the transaction open for the caller to
-    finish (rare; used only where the caller must own the commit).
+    Returns (success, result, error). On success the integrity session is
+    committed and closed; on failure it is rolled back and closed. The caller's
+    own session is never touched, so a best-effort integrity failure can never
+    poison an authoritative business transaction.
     """
     session = _make_session()
     try:
         result = await builder(session)
-        if commit:
-            await session.commit()
+        await session.commit()
         return True, result, None
     except Exception as exc:  # noqa: BLE001 - boundary separator; caller logs
         try:
             await session.rollback()
-        except Exception:  # noqa: BLE001 - best-effort cleanup
-            pass
+        except Exception:  # noqa: BLE001 - best-effort cleanup: still close below
+            logger.debug("isolated integrity rollback cleanup failed type=%s",
+                         type(exc).__name__)
         logger.warning("isolated integrity transaction failed type=%s: %s",
                        type(exc).__name__, exc)
         return False, None, exc
@@ -76,14 +75,4 @@ async def run_integrity_isolated(builder: Callable[[AsyncSession], Awaitable[T]]
         await session.close()
 
 
-async def report_integrity_outcome(success: bool, operation: str, case_id, error: Exception | None) -> str:
-    """Log an isolated integrity outcome with safe context; return status text."""
-    if success:
-        return "INTEGRITY_OK"
-    logger.warning("integrity %s failed for case=%s type=%s", operation, case_id,
-                   type(error).__name__ if error else "unknown")
-    return "INTEGRITY_UNAVAILABLE"
-
-
-# Re-export for convenience at other call sites.
-__all__ = ["run_integrity_isolated", "report_integrity_outcome", "AsyncSession", "Any"]
+__all__ = ["run_integrity_isolated", "set_integrity_session_factory", "AsyncSession", "Any"]

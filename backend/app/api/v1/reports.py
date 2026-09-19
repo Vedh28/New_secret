@@ -51,8 +51,10 @@ async def generate_report(
             result={"report_type": report.report_type,
                     "case_number": payload.case_number or ""},
         )
-    except Exception:  # noqa: BLE001 - audit is best-effort
-        pass
+    except Exception as exc:  # noqa: BLE001 - audit is best-effort
+        import logging
+        logging.getLogger("secret.audit").warning(
+            "report audit failed report=%s type=%s", report.id, type(exc).__name__)
     # Commit the AUTHORITATIVE report transaction first; integrity registration
     # runs afterwards in its own transaction so a ledger failure can never
     # poison the persisted report.

@@ -116,8 +116,10 @@ async def materialize(
             user, "graph_refreshed", object_type="graph",
             result={"entities": summary["entities"], "edges": summary["edges"]},
         )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 - best-effort audit
+        import logging
+        logging.getLogger("secret.audit").warning(
+            "graph refresh audit failed type=%s", type(exc).__name__)
     await session.commit()
     return summary
 

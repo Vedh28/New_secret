@@ -26,8 +26,10 @@ async def lifespan(_: FastAPI):
         try:
             async with async_session_factory() as session:
                 await ensure_admin_user(session)
-        except Exception:  # noqa: BLE001 - never block startup on seed failure
-            pass
+        except Exception as exc:  # noqa: BLE001 - never block startup on seed failure
+            import logging
+            logging.getLogger("secret.startup").warning(
+                "demo admin seed failed type=%s: %s", type(exc).__name__, exc)
     yield
     if settings.secret_env.lower() != "test":
         # Skip disposing the shared engine under tests: TestClient teardown

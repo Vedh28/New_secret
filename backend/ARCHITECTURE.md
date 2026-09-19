@@ -314,3 +314,34 @@ SECRET_ENV=dev
 | 10 | Deployment |
 
 Each phase is independently verified and confirmed before the next begins.
+
+
+## Transaction Ownership (Integrity Layer)
+
+### Authoritative business transaction (owns the outcome)
+- case / source / evidence / intelligence / analyst decision / report / audit
+- Committed FIRST; never depends on integrity success.
+
+### Integrity transaction (best-effort, verifiable, retryable)
+- integrity outbox, ledger blocks, ledger events, evidence integrity,
+  snapshot integrity, analyst-decision integrity, report integrity
+- Runs in a SEPARATE session via `app/blockchain/isolated.run_integrity_isolated`,
+  sharing the configured engine; committed or rolled back independently.
+- Integrity failure NEVER poisons the business session; it is logged with
+  safe context and leaves the outbox PENDING/FAILED for retry.
+
+### Rule
+`Business persistence MUST NOT depend on integrity persistence succeeding.`
+
+### Lock lifetime
+- PostgreSQL: transaction-scoped `pg_advisory_xact_lock` per case, released on
+  the integrity transaction's commit/rollback (or the business commit for the
+  small in-transaction enqueue path).
+- SQLite (tests/dev only): database/file-wide writer serialization; not
+  per-case. Correctness preserved; no per-case parallelism claim.
+
+### Terminology
+The local implementation is a PERMISSIONED CHAINED INTEGRITY LEDGER (database
+backed) -- not a decentralized public blockchain, and not cryptocurrency.
+An institutional deployment may back the same `BlockchainLedger` abstraction
+with a permissioned distributed ledger (e.g. Hyperledger Fabric).

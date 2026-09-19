@@ -634,7 +634,9 @@ class BlockchainIntegrityService:
                     report_id=row.id, report_type=row.report_type, title=row.title,
                     sections=row.sections_json, generated_at=str(row.generated_at),
                 ))
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - per-row counting must stay resilient
+                logger.debug("report hash recompute skipped report=%s type=%s",
+                             row.id, type(exc).__name__)
                 continue
             if current == event.payload_json.get("report_hash"):
                 verified += 1

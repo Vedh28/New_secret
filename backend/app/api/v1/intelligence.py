@@ -121,6 +121,9 @@ async def what_if(
         graph.add_edge(r.source, r.target, type=r.rel_type, weight=r.strength or r.confidence)
 
     result = simulate.simulate(graph, op, subject)
+    # Simulation is read-only; audit is best-effort but must not leave the
+    # session in a rollback-required state. Commit ONLY if the audit insert
+    # succeeded; otherwise log and return the analytical result unchanged.
     try:
         from app.services.audit_service import AuditService
         await AuditService(session).record(
@@ -128,8 +131,11 @@ async def what_if(
             result={"case_id": case_id, "operation": op},
         )
         await session.commit()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 - best-effort audit
+        if not session.in_transaction():
+            await session.rollback()
+        logger.warning("simulation audit failed case=%s op=%s type=%s",
+                       case_id, op, type(exc).__name__)
     return _d(result)
 
 

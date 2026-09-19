@@ -70,5 +70,8 @@ async def _audit_lead(session, user, action: str, lead, result: dict) -> None:
         await AuditService(session).record(
             user, action, object_type="lead", object_id=str(lead.id), result=result
         )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 - best-effort audit
+        import logging
+        logging.getLogger("secret.audit").warning(
+            "lead audit failed lead=%s action=%s type=%s",
+            getattr(lead, "id", None), action, type(exc).__name__)
